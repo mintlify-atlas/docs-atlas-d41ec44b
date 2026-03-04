@@ -1,0 +1,112 @@
+{
+  "projectType": "ai-ml",
+  "projectName": "Torch Brain",
+  "projectDescription": "A Python library for deep learning models designed for neuroscience with multi-recording training and neural population decoding",
+  "theme": "aspen",
+  "primaryColor": "#5d6c75",
+  "lightColor": "#b5bec1",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/data-loading",
+              "concepts/samplers",
+              "concepts/transforms",
+              "concepts/modalities"
+            ]
+          },
+          {
+            "group": "Models",
+            "pages": [
+              "models/overview",
+              "models/poyo",
+              "models/capoyo",
+              "models/poyo-plus"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/training",
+              "guides/custom-datasets",
+              "guides/evaluation"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core",
+            "pages": [
+              "api/data",
+              "api/dataset",
+              "api/samplers"
+            ]
+          },
+          {
+            "group": "Neural Network Modules",
+            "pages": [
+              "api/nn/embeddings",
+              "api/nn/attention",
+              "api/nn/readouts",
+              "api/nn/loss"
+            ]
+          },
+          {
+            "group": "Transforms",
+            "pages": [
+              "api/transforms/augmentation",
+              "api/transforms/filtering"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "pages": [
+              "api/utils",
+              "api/registry",
+              "api/optimizers"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Multi-recording training with optimized data loading",
+    "Advanced samplers for arbitrary temporal slicing",
+    "Custom neural network modules including rotary attention",
+    "POYO model for neural population decoding",
+    "Support for multiple neural and behavioral modalities",
+    "Comprehensive data transforms and augmentation"
+  ],
+  "publicApiSurface": [
+    "torch_brain.data.Dataset",
+    "torch_brain.data.sampler.RandomFixedWindowSampler",
+    "torch_brain.models.POYO",
+    "torch_brain.models.CaPOYO",
+    "torch_brain.models.POYOPlus",
+    "torch_brain.nn.RotarySelfAttention",
+    "torch_brain.nn.RotaryCrossAttention",
+    "torch_brain.nn.MultitaskReadout",
+    "torch_brain.nn.InfiniteVocabEmbedding",
+    "torch_brain.transforms.UnitDropout",
+    "torch_brain.transforms.RandomTimeScaling",
+    "torch_brain.transforms.RandomCrop",
+    "torch_brain.registry.register_modality"
+  ]
+}
