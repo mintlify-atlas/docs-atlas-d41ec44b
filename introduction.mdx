@@ -45,15 +45,21 @@ Apply transforms to neural data including:
 
 ## Implemented models
 
-torch_brain currently includes:
+torch_brain includes several state-of-the-art neural decoding models:
 
-<Card title="POYO" icon="brain" href="https://arxiv.org/abs/2310.16046">
-  **A Unified, Scalable Framework for Neural Population Decoding** (Azabou et al. 2023)
-  
-  Published at NeurIPS 2023, POYO is a transformer-based model for neural decoding from electrophysiological recordings.
-</Card>
+<CardGroup cols={2}>
+  <Card title="POYO" icon="brain" href="/models/poyo">
+    A unified, scalable framework for neural population decoding (NeurIPS 2023)
+  </Card>
+  <Card title="POYO+" icon="network-wired" href="/models/poyo-plus">
+    Multi-task extension of POYO for simultaneous behavioral predictions
+  </Card>
+  <Card title="CaPOYO" icon="microscope" href="/models/capoyo">
+    Specialized variant for calcium imaging data
+  </Card>
+</CardGroup>
 
-More models are coming soon.
+See the [models overview](/models/overview) for detailed comparisons and guidance on choosing the right model.
 
 ## Use cases
 
