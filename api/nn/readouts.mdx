@@ -1,0 +1,285 @@
+---
+title: Multitask Readout
+description: Multi-task readout layers for neural network outputs
+---
+
+## MultitaskReadout
+
+A module that performs multi-task linear readouts from transformer output embeddings. This allows a single model to produce outputs for multiple tasks simultaneously, where each task may have different output dimensions.
+
+### Class Signature
+
+```python
+class MultitaskReadout(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        readout_specs: Dict[str, ModalitySpec],
+    )
+```
+
+### Parameters
+
+<ParamField path="dim" type="int" required>
+  Dimension of input embeddings from the transformer
+</ParamField>
+
+<ParamField path="readout_specs" type="Dict[str, ModalitySpec]" required>
+  Dictionary mapping readout names to their specifications. Each ModalitySpec contains the output dimension and ID for that task.
+</ParamField>
+
+### Forward Methods
+
+#### forward()
+
+```python
+def forward(
+    self,
+    output_embs: Tensor,
+    output_readout_index: Tensor,
+    unpack_output: bool = False,
+) -> Union[Dict, List[Dict]]
+```
+
+Forward pass for regular or padded sequences.
+
+<ParamField path="output_embs" type="Tensor" required>
+  Transformer output embeddings of shape `(B, N_out, D)` where B is batch size, N_out is number of output tokens, D is embedding dimension
+</ParamField>
+
+<ParamField path="output_readout_index" type="Tensor" required>
+  Integer indices of shape `(B, N_out)` indicating which readout head to use for each output token
+</ParamField>
+
+<ParamField path="unpack_output" type="bool" default="False">
+  If False (default), concatenates all outputs into a single dictionary organized by task. If True, returns a list of dictionaries, one per batch sample.
+</ParamField>
+
+**Returns:**
+- If `unpack_output=False`: Single dictionary with keys as task names and values as tensors of shape `(total_queries, n_channels)`
+- If `unpack_output=True`: List of dictionaries, one per batch sample, each containing outputs organized by task name
+
+#### forward_varlen()
+
+```python
+def forward_varlen(
+    self,
+    output_embs: Tensor,
+    output_readout_index: Tensor,
+    output_batch_index: Tensor,
+    unpack_output: bool = False,
+) -> Union[Dict, List[Dict]]
+```
+
+Forward pass for variable-length sequences that are chained together. More memory efficient as it avoids padding.
+
+<ParamField path="output_embs" type="Tensor" required>
+  Transformer output embeddings of shape `(N_total, D)` where N_total is the sum of sequence lengths across the batch
+</ParamField>
+
+<ParamField path="output_readout_index" type="Tensor" required>
+  Integer indices of shape `(N_total,)` indicating which readout head to use for each output token
+</ParamField>
+
+<ParamField path="output_batch_index" type="Tensor" required>
+  Batch indices of shape `(N_total,)` indicating which batch element each token belongs to
+</ParamField>
+
+<ParamField path="unpack_output" type="bool" default="False">
+  If False (default), concatenates all outputs. If True, returns a list of dictionaries per batch sample.
+</ParamField>
+
+**Returns:** Same format as `forward()`
+
+### Usage Example
+
+```python
+from torch_brain.nn import MultitaskReadout
+from torch_brain.registry import ModalitySpec
+import torch
+
+# Define readout specifications for different tasks
+readout_specs = {
+    'position': ModalitySpec(id=0, dim=2, value_key='position', timestamp_key='time'),
+    'velocity': ModalitySpec(id=1, dim=2, value_key='velocity', timestamp_key='time'),
+    'label': ModalitySpec(id=2, dim=10, value_key='label', timestamp_key='time'),
+}
+
+# Create multitask readout layer
+readout = MultitaskReadout(
+    dim=256,
+    readout_specs=readout_specs
+)
+
+# Example: batch of 2 samples, each with 100 output tokens
+batch_size, n_tokens, dim = 2, 100, 256
+output_embs = torch.randn(batch_size, n_tokens, dim)
+
+# Assign different tokens to different tasks
+# First 50 tokens -> position (id=0), next 30 -> velocity (id=1), last 20 -> label (id=2)
+output_readout_index = torch.cat([
+    torch.zeros(batch_size, 50, dtype=torch.long),
+    torch.ones(batch_size, 30, dtype=torch.long),
+    torch.full((batch_size, 20), 2, dtype=torch.long),
+], dim=1)
+
+# Get outputs (concatenated across batch)
+outputs = readout(output_embs, output_readout_index, unpack_output=False)
+print(outputs['position'].shape)  # torch.Size([100, 2]) - 50 tokens * 2 batch
+print(outputs['velocity'].shape)  # torch.Size([60, 2]) - 30 tokens * 2 batch
+print(outputs['label'].shape)     # torch.Size([40, 10]) - 20 tokens * 2 batch
+
+# Get outputs per sample
+outputs_per_sample = readout(output_embs, output_readout_index, unpack_output=True)
+print(len(outputs_per_sample))  # 2 (one dict per batch sample)
+print(outputs_per_sample[0]['position'].shape)  # torch.Size([50, 2])
+print(outputs_per_sample[0]['velocity'].shape)  # torch.Size([30, 2])
+```
+
+### Variable Length Example
+
+```python
+# Variable length sequences chained together
+# Sample 1: 80 tokens, Sample 2: 120 tokens
+seq_lengths = [80, 120]
+n_total = sum(seq_lengths)
+
+output_embs_varlen = torch.randn(n_total, dim)  # (200, 256)
+
+# Create readout indices and batch indices
+output_readout_index_varlen = torch.cat([
+    torch.zeros(40, dtype=torch.long),  # First 40 of sample 1 -> position
+    torch.ones(40, dtype=torch.long),   # Next 40 of sample 1 -> velocity
+    torch.zeros(60, dtype=torch.long),  # First 60 of sample 2 -> position
+    torch.full((60,), 2, dtype=torch.long),  # Last 60 of sample 2 -> label
+])
+
+output_batch_index = torch.cat([
+    torch.zeros(80, dtype=torch.long),   # Sample 1
+    torch.ones(120, dtype=torch.long),   # Sample 2
+])
+
+# Forward pass
+outputs = readout.forward_varlen(
+    output_embs_varlen,
+    output_readout_index_varlen,
+    output_batch_index,
+    unpack_output=False
+)
+print(outputs['position'].shape)  # torch.Size([100, 2]) - 40 + 60 tokens
+print(outputs['velocity'].shape)  # torch.Size([40, 2])
+print(outputs['label'].shape)     # torch.Size([60, 10])
+```
+
+---
+
+## prepare_for_multitask_readout
+
+Helper function to prepare data for multitask readout from a `temporaldata.Data` object.
+
+### Function Signature
+
+```python
+def prepare_for_multitask_readout(
+    data: Data,
+    readout_registry: Dict[str, ModalitySpec],
+) -> Tuple[Tensor, Dict, Tensor, Dict, Dict]
+```
+
+### Parameters
+
+<ParamField path="data" type="Data" required>
+  A temporaldata.Data object containing the multitask_readout configuration
+</ParamField>
+
+<ParamField path="readout_registry" type="Dict[str, ModalitySpec]" required>
+  Dictionary mapping readout names to their specifications
+</ParamField>
+
+### Returns
+
+Returns a tuple of:
+1. `timestamps` (Tensor): Concatenated timestamps for all readout tasks
+2. `values` (Dict): Dictionary mapping task names to their target values
+3. `readout_index` (Tensor): Readout indices indicating which task each timestamp belongs to
+4. `weights` (Dict): Dictionary mapping task names to sample weights
+5. `eval_mask` (Dict): Dictionary mapping task names to evaluation masks
+
+### Configuration Format
+
+The `data.config['multitask_readout']` should be a list of dictionaries, each containing:
+
+<ParamField path="readout_id" type="str" required>
+  ID of the readout task (must be registered in the modality registry)
+</ParamField>
+
+<ParamField path="timestamp_key" type="str">
+  Key to access timestamps in the data object. Defaults to the value in ModalitySpec.
+</ParamField>
+
+<ParamField path="value_key" type="str">
+  Key to access target values in the data object. Defaults to the value in ModalitySpec.
+</ParamField>
+
+<ParamField path="normalize_mean" type="Union[float, List[float]]">
+  Mean value(s) for normalization. Can be a scalar or list for per-channel normalization.
+</ParamField>
+
+<ParamField path="normalize_std" type="Union[float, List[float]]">
+  Standard deviation value(s) for normalization. Can be a scalar or list for per-channel normalization.
+</ParamField>
+
+<ParamField path="weights" type="dict">
+  Configuration for computing sample weights based on interval membership
+</ParamField>
+
+<ParamField path="eval_interval" type="str">
+  Key to access evaluation interval in the data object
+</ParamField>
+
+### Usage Example
+
+```python
+from torch_brain.nn import prepare_for_multitask_readout
+from torch_brain.registry import ModalitySpec
+from temporaldata import Data
+import numpy as np
+
+# Create readout registry
+readout_registry = {
+    'position': ModalitySpec(id=0, dim=2, value_key='coords', timestamp_key='time'),
+    'speed': ModalitySpec(id=1, dim=1, value_key='speed', timestamp_key='time'),
+}
+
+# Create data object with configuration
+data = Data(
+    coords=np.random.randn(100, 2),
+    speed=np.random.randn(100, 1),
+    time=np.linspace(0, 10, 100),
+    config={
+        'multitask_readout': [
+            {
+                'readout_id': 'position',
+                'normalize_mean': [0.0, 0.0],
+                'normalize_std': [1.0, 1.0],
+            },
+            {
+                'readout_id': 'speed',
+                'normalize_mean': 0.0,
+                'normalize_std': 1.0,
+            },
+        ]
+    }
+)
+
+# Prepare data for multitask readout
+timestamps, values, readout_index, weights, eval_mask = prepare_for_multitask_readout(
+    data, readout_registry
+)
+
+print(timestamps.shape)  # Concatenated timestamps
+print(values.keys())     # dict_keys(['position', 'speed'])
+print(readout_index.shape)  # Same length as timestamps
+print(values['position'].shape)  # (100, 2) - normalized
+print(values['speed'].shape)     # (100, 1) - normalized
+```

@@ -1,0 +1,91 @@
+---
+title: Introduction
+description: Learn about torch_brain, a Python library for deep learning models designed for neuroscience
+---
+
+**torch_brain** is a Python library for various deep learning models designed for neuroscience. It provides a unified framework for training neural decoding models on electrophysiological recordings.
+
+## What is torch_brain?
+
+torch_brain streamlines the development and training of deep learning models for neuroscience by providing:
+
+- **Multi-recording training** - Train models across multiple recording sessions and subjects
+- **Optimized data loading** - On-demand data access that only loads data when needed
+- **Advanced samplers** - Enable arbitrary slicing of data on the fly
+- **Flexible data collation** - Support for chaining and padding strategies
+- **Multi-modal support** - Handle arbitrary neural and behavioral modalities
+- **Reusable components** - Collection of useful nn.Modules like stitchers, multi-output readouts, and infinite vocab embeddings
+- **Transform library** - Neural and behavioral transforms and augmentation strategies
+
+## Key features
+
+### Efficient data handling
+
+torch_brain is designed to work with large-scale neuroscience datasets. The lazy loading system ensures that only the data you need is loaded into memory, both temporally (only requested time intervals) and by attributes (only requested features).
+
+### Multi-recording training
+
+Train models across multiple recording sessions, subjects, and even datasets. The framework handles session-specific embeddings and unit vocabularies automatically.
+
+### Advanced neural network modules
+
+torch_brain includes specialized modules for neuroscience:
+
+- **InfiniteVocabEmbedding** - Dynamic vocabulary that grows as new units are encountered
+- **RotarySelfAttention** and **RotaryCrossAttention** - Attention mechanisms with rotary position embeddings optimized for temporal data
+- **Stitchers** - Combine predictions from overlapping windows
+- **Multi-output readouts** - Handle multiple behavioral outputs simultaneously
+
+### Transform and augmentation
+
+Apply transforms to neural data including:
+- Unit dropout for regularization
+- Temporal binning and smoothing
+- Data augmentation strategies specific to neuroscience
+
+## Implemented models
+
+torch_brain currently includes:
+
+<Card title="POYO" icon="brain" href="https://arxiv.org/abs/2310.16046">
+  **A Unified, Scalable Framework for Neural Population Decoding** (Azabou et al. 2023)
+  
+  Published at NeurIPS 2023, POYO is a transformer-based model for neural decoding from electrophysiological recordings.
+</Card>
+
+More models are coming soon.
+
+## Use cases
+
+torch_brain is ideal for:
+
+- **Neural decoding** - Predict behavior, kinematics, or other variables from neural activity
+- **Foundation models** - Pretrain large models on multiple datasets and finetune for specific tasks
+- **Transfer learning** - Leverage pretrained models for new recording sessions or subjects
+- **Multi-session analysis** - Train models that generalize across recording sessions
+- **Benchmarking** - Compare different model architectures on standardized datasets
+
+## Citation
+
+If you use torch_brain in your research, please cite the POYO paper:
+
+```bibtex
+@inproceedings{
+    azabou2023unified,
+    title={A Unified, Scalable Framework for Neural Population Decoding},
+    author={Mehdi Azabou and Vinam Arora and Venkataramana Ganesh and Ximeng Mao and Santosh Nachimuthu and Michael Mendelson and Blake Richards and Matthew Perich and Guillaume Lajoie and Eva L. Dyer},
+    booktitle={Thirty-seventh Conference on Neural Information Processing Systems},
+    year={2023},
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install torch_brain and set up your environment
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Train your first POYO model in minutes
+  </Card>
+</CardGroup>

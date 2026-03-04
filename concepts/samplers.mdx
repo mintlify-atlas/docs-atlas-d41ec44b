@@ -1,0 +1,360 @@
+---
+title: Samplers
+description: Temporal slicing strategies for neural data including RandomFixedWindowSampler, SequentialFixedWindowSampler, and distributed samplers
+---
+
+## Overview
+
+Samplers in torch_brain determine how to slice continuous neural recordings into fixed-size samples for training and evaluation. They extend PyTorch's `torch.utils.data.Sampler` interface and work seamlessly with the [Dataset](/concepts/data-loading) class.
+
+<Info>
+  While the Dataset provides access to recordings, the Sampler's job is to generate `DatasetIndex` objects that specify which temporal windows to extract.
+</Info>
+
+## Available Samplers
+
+### RandomFixedWindowSampler
+
+Samples fixed-length windows randomly with temporal jitter, ideal for training.
+
+```python
+from torch_brain.data.sampler import RandomFixedWindowSampler
+from temporaldata import Interval
+
+sampling_intervals = {
+    "session_1": Interval(start=[0, 100], end=[50, 150]),
+    "session_2": Interval(start=[0], end=[200])
+}
+
+sampler = RandomFixedWindowSampler(
+    sampling_intervals=sampling_intervals,
+    window_length=1.0,  # 1 second windows
+    generator=None,     # Optional: torch.Generator for reproducibility
+    drop_short=True     # Drop intervals shorter than window_length
+)
+
+# Number of samples per epoch
+num_samples = len(sampler)  # floor(total_interval_length / window_length)
+```
+
+**How it works:**
+
+1. For each sampling interval, calculates: `N = floor(interval_length / window_length)`
+2. Applies random temporal jitter to the first window in each interval
+3. Samples windows at regular intervals within that jittered space
+4. Shuffles all windows across all intervals
+5. Ensures consistent sample count across epochs by handling edge cases
+
+<Note>
+  The random jitter is applied once per interval at the start, then windows are regularly spaced. This ensures full coverage while maintaining randomness.
+</Note>
+
+**Edge case handling:**
+
+If `left_offset + right_offset >= window_length`, an additional sample is added:
+- Uses the right offset if `right_offset > left_offset`
+- Uses the left offset otherwise
+
+This ensures the number of samples remains consistent across epochs.
+
+### SequentialFixedWindowSampler
+
+Samples windows sequentially in a deterministic order, ideal for evaluation.
+
+```python
+from torch_brain.data.sampler import SequentialFixedWindowSampler
+
+sampler = SequentialFixedWindowSampler(
+    sampling_intervals=sampling_intervals,
+    window_length=1.0,
+    step=0.5,          # Optional: step size between windows (default: window_length)
+    drop_short=False   # Keep short intervals
+)
+```
+
+**Key features:**
+
+- Windows are sampled in order without shuffling
+- If `step < window_length`, windows overlap
+- If sequence length isn't evenly divisible by step, the last window overlaps with the previous one to ensure full coverage
+- Indices are cached since they're deterministic
+
+```python
+# Non-overlapping windows
+sampler = SequentialFixedWindowSampler(
+    sampling_intervals=intervals,
+    window_length=1.0,
+    step=1.0  # No overlap
+)
+
+# Overlapping windows (useful for sliding window inference)
+sampler = SequentialFixedWindowSampler(
+    sampling_intervals=intervals,
+    window_length=1.0,
+    step=0.1  # 90% overlap
+)
+```
+
+### TrialSampler
+
+Samples complete trial intervals without slicing into windows.
+
+```python
+from torch_brain.data.sampler import TrialSampler
+
+# Each interval represents a trial
+trial_intervals = {
+    "session_1": Interval(start=[0, 5, 10], end=[2, 7, 12]),  # 3 trials
+}
+
+sampler = TrialSampler(
+    sampling_intervals=trial_intervals,
+    generator=None,
+    shuffle=False  # Set to True for random order
+)
+
+# Length equals total number of trials
+len(sampler)  # 3
+```
+
+**Use cases:**
+- Trial-based experiments (e.g., reaching tasks with discrete trials)
+- Event-based analysis
+- Variable-length sequences
+
+## Distributed Samplers
+
+### DistributedEvaluationSamplerWrapper
+
+Wraps any sampler for distributed evaluation without dropping samples.
+
+```python
+from torch_brain.data.sampler import (
+    SequentialFixedWindowSampler,
+    DistributedEvaluationSamplerWrapper
+)
+
+# Create base sampler
+base_sampler = SequentialFixedWindowSampler(
+    sampling_intervals=sampling_intervals,
+    window_length=10.0
+)
+
+# Wrap for distributed evaluation
+dist_sampler = DistributedEvaluationSamplerWrapper(
+    sampler=base_sampler,
+    num_replicas=4,  # Number of GPUs
+    rank=0           # Current GPU rank
+)
+```
+
+**Key differences from PyTorch's DistributedSampler:**
+
+- **Preserves all samples**: Does not drop samples to equalize across ranks
+- **Uneven distribution**: Some ranks may process more samples than others
+- **No synchronization needed**: Ranks may finish at different times
+
+<Warning>
+  This sampler assumes no communication between ranks during evaluation. Some ranks may perform more steps than others, which is fine for standard evaluation but not suitable for synchronized training.
+</Warning>
+
+**How samples are distributed:**
+
+```python
+# Total samples: 100, num_replicas: 3
+# Rank 0: samples [0, 3, 6, 9, ...] → 34 samples
+# Rank 1: samples [1, 4, 7, 10, ...] → 33 samples  
+# Rank 2: samples [2, 5, 8, 11, ...] → 33 samples
+# Total: 100 (no samples dropped)
+```
+
+### DistributedStitchingFixedWindowSampler
+
+Advanced sampler for sliding window inference with prediction stitching across distributed processes.
+
+```python
+from torch_brain.data.sampler import DistributedStitchingFixedWindowSampler
+
+sampler = DistributedStitchingFixedWindowSampler(
+    sampling_intervals=sampling_intervals,
+    window_length=1.0,
+    step=0.1,        # 90% overlap
+    batch_size=32,
+    num_replicas=4,  # Automatically detected if None
+    rank=0           # Automatically detected if None
+)
+```
+
+**Key features:**
+
+1. **Keeps contiguous windows on same rank**: All windows from the same sequence stay together, enabling stitching without cross-rank communication
+2. **Load balancing**: Intervals are sorted by size and assigned to ranks to minimize imbalance
+3. **Sequence tracking**: Provides `sequence_index` to identify which windows belong together
+4. **Memory efficient**: Allows stitching as soon as all windows from a sequence are available
+
+**Load balancing algorithm:**
+
+```python
+# Intervals sorted by number of windows (descending)
+# Assigned to rank with fewest windows so far
+# Result: Balanced workload across ranks
+```
+
+**Usage with stitching:**
+
+```python
+# During inference
+for batch_idx, batch in enumerate(dataloader):
+    predictions = model(batch)
+    
+    # Use sequence_index to group predictions from same sequence
+    seq_idx = sampler.sequence_index[batch_idx * batch_size:(batch_idx + 1) * batch_size]
+    
+    # Stitch predictions when sequence is complete
+    # (implementation depends on your stitching logic)
+```
+
+<Info>
+  Use `set_epoch(epoch)` for API compatibility, though it's not strictly necessary for sequential sampling.
+</Info>
+
+## Sampling Intervals
+
+All samplers expect `sampling_intervals` as a dictionary mapping recording IDs to `Interval` objects:
+
+```python
+from temporaldata import Interval
+
+# Single continuous interval
+intervals = {
+    "recording_1": Interval(start=[0], end=[1000])
+}
+
+# Multiple disjoint intervals (e.g., from train/test splits)
+intervals = {
+    "recording_1": Interval(
+        start=[0, 100, 200],
+        end=[50, 150, 250]
+    )
+}
+```
+
+Get sampling intervals from a Dataset:
+
+```python
+from torch_brain.data import Dataset
+
+dataset = Dataset(
+    root="/path/to/data",
+    recording_id="brainset/session",
+    split="train"
+)
+
+sampling_intervals = dataset.get_sampling_intervals()
+# Returns: {"brainset/session": Interval(...)}
+```
+
+## Example: Training Loop
+
+```python
+import torch
+from torch.utils.data import DataLoader
+from torch_brain.data import Dataset
+from torch_brain.data.sampler import RandomFixedWindowSampler
+
+# Setup dataset
+dataset = Dataset(
+    root="/path/to/data",
+    recording_id="perich_miller_population_2018/c_20131003_center_out_reaching",
+    split="train"
+)
+
+# Create sampler
+sampler = RandomFixedWindowSampler(
+    sampling_intervals=dataset.get_sampling_intervals(),
+    window_length=1.0,
+    generator=torch.Generator().manual_seed(42)  # Reproducibility
+)
+
+# Create dataloader
+dataloader = DataLoader(
+    dataset,
+    batch_size=32,
+    sampler=sampler,
+    num_workers=4
+)
+
+print(f"Samples per epoch: {len(sampler)}")
+
+# Training loop
+for epoch in range(num_epochs):
+    for batch in dataloader:
+        # batch.spikes, batch.cursor.vel, etc.
+        outputs = model(batch)
+        loss = criterion(outputs, targets)
+        # ... backward pass
+```
+
+## Example: Evaluation with Sequential Sampling
+
+```python
+from torch_brain.data.sampler import SequentialFixedWindowSampler
+
+# Setup validation dataset
+val_dataset = Dataset(
+    root="/path/to/data",
+    recording_id="perich_miller_population_2018/c_20131003_center_out_reaching",
+    split="valid"
+)
+
+# Sequential sampler for deterministic evaluation
+val_sampler = SequentialFixedWindowSampler(
+    sampling_intervals=val_dataset.get_sampling_intervals(),
+    window_length=1.0,
+    step=1.0  # Non-overlapping
+)
+
+val_dataloader = DataLoader(
+    val_dataset,
+    batch_size=32,
+    sampler=val_sampler,
+    num_workers=4
+)
+
+# Evaluation loop
+model.eval()
+with torch.no_grad():
+    for batch in val_dataloader:
+        outputs = model(batch)
+        # ... compute metrics
+```
+
+## Handling Short Intervals
+
+Both fixed window samplers support `drop_short` parameter:
+
+```python
+# Drop intervals shorter than window_length (default)
+sampler = RandomFixedWindowSampler(
+    sampling_intervals=intervals,
+    window_length=10.0,
+    drop_short=True  # Logs warning about dropped data
+)
+
+# Raise error on short intervals
+sampler = RandomFixedWindowSampler(
+    sampling_intervals=intervals,
+    window_length=10.0,
+    drop_short=False  # Raises ValueError if any interval too short
+)
+```
+
+<Note>
+  When `drop_short=True`, the sampler logs the total amount of data dropped and ensures at least one sample remains.
+</Note>
+
+## Next Steps
+
+- Learn about [Data Loading](/concepts/data-loading) to create datasets
+- Apply augmentations with [Transforms](/concepts/transforms)
+- Work with multi-modal data using [Modalities](/concepts/modalities)

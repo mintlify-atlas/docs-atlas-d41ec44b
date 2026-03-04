@@ -1,122 +1,106 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Torch Brain",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#5d6c75",
+    "light": "#b5bec1"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "https://media.brand.dev/ff927a99-aba2-44f8-8f6a-5dca07b83aeb.png",
+  "logo": {
+    "light": "https://media.brand.dev/ff927a99-aba2-44f8-8f6a-5dca07b83aeb.png",
+    "dark": "https://media.brand.dev/ff927a99-aba2-44f8-8f6a-5dca07b83aeb.png"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/neuro-galaxy/torch_brain"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/neuro-galaxy/torch_brain",
+      "discord": "https://discord.gg/kQNKA6B8ZC"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "installation",
+              "quickstart"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/data-loading",
+              "concepts/samplers",
+              "concepts/transforms",
+              "concepts/modalities"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Models",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "models/overview",
+              "models/poyo",
+              "models/capoyo",
+              "models/poyo-plus"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Guides",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "guides/training",
+              "guides/custom-datasets",
+              "guides/evaluation"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Core",
             "pages": [
-              "api-reference/introduction"
+              "api/data",
+              "api/dataset",
+              "api/samplers"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Neural Network Modules",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/nn/embeddings",
+              "api/nn/attention",
+              "api/nn/readouts",
+              "api/nn/loss"
+            ]
+          },
+          {
+            "group": "Transforms",
+            "pages": [
+              "api/transforms/augmentation",
+              "api/transforms/filtering"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "pages": [
+              "api/utils",
+              "api/registry",
+              "api/optimizers"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

@@ -1,0 +1,218 @@
+---
+title: Augmentation Transforms
+description: Data augmentation transforms for neural time series data
+---
+
+Augmentation transforms modify neural data to increase training data diversity and improve model generalization. These transforms apply random variations to temporal properties and sampling strategies.
+
+## RandomTimeScaling
+
+Applies random scaling and offset to the time axis of all temporal data, including time series and intervals.
+
+```python
+from torch_brain.transforms import RandomTimeScaling
+
+transform = RandomTimeScaling(
+    min_scale=0.8,
+    max_scale=1.2,
+    min_offset=-0.1,
+    max_offset=0.1
+)
+
+augmented_data = transform(data)
+```
+
+### Parameters
+
+<ParamField path="min_scale" type="float" required>
+  Minimum scaling factor for the time axis. Values less than 1.0 compress time, values greater than 1.0 expand time.
+</ParamField>
+
+<ParamField path="max_scale" type="float" required>
+  Maximum scaling factor for the time axis.
+</ParamField>
+
+<ParamField path="min_offset" type="float" default="0">
+  Minimum time offset to apply after scaling.
+</ParamField>
+
+<ParamField path="max_offset" type="float" default="0">
+  Maximum time offset to apply after scaling.
+</ParamField>
+
+### Behavior
+
+The transform performs the following operations:
+
+1. Samples a random scale factor uniformly between `min_scale` and `max_scale`
+2. Samples a random offset uniformly between `min_offset` and `max_offset`
+3. Applies the transformation: `new_time = original_time * scale + offset`
+4. Updates all temporal attributes:
+   - `IrregularTimeSeries`: timestamps and domain
+   - `RegularTimeSeries`: sampling rate and domain (rate = rate / scale)
+   - `Interval`: start and end times
+
+### Example: Before and After
+
+```python
+# Original data with spikes at [0.1, 0.5, 0.9] seconds
+data.spikes.timestamps  # tensor([0.1, 0.5, 0.9])
+data.domain  # Interval(start=0.0, end=1.0)
+
+# After applying RandomTimeScaling(min_scale=2.0, max_scale=2.0)
+transformed = transform(data)
+transformed.spikes.timestamps  # tensor([0.2, 1.0, 1.8])
+transformed.domain  # Interval(start=0.0, end=2.0)
+```
+
+### Usage with Dataset
+
+```python
+from torch_brain.data import Dataset
+
+dataset = Dataset(
+    data_path="path/to/data",
+    transform=RandomTimeScaling(
+        min_scale=0.9,
+        max_scale=1.1,
+        min_offset=-0.05,
+        max_offset=0.05
+    )
+)
+```
+
+---
+
+## RandomCrop
+
+Randomly crops a temporal window of fixed length from the data. If the data is shorter than the crop length, the original data is returned unchanged.
+
+```python
+from torch_brain.transforms import RandomCrop
+
+transform = RandomCrop(crop_len=2.0)  # 2 seconds
+cropped_data = transform(data)
+```
+
+### Parameters
+
+<ParamField path="crop_len" type="float" required>
+  Duration of the cropped window in the same units as the data's time axis (typically seconds).
+</ParamField>
+
+### Behavior
+
+The transform performs the following operations:
+
+1. Calculates the sequence length: `sequence_len = data.end - data.start`
+2. If `sequence_len <= crop_len`, returns the original data unchanged
+3. Otherwise, randomly samples a start time: `start ~ Uniform(0, sequence_len - crop_len)`
+4. Computes end time: `end = start + crop_len`
+5. Returns `data.slice(start, end)`
+
+### Example: Before and After
+
+```python
+# Original data spanning 5 seconds
+data.domain  # Interval(start=0.0, end=5.0)
+data.spikes.timestamps  # tensor([0.2, 1.5, 2.3, 3.8, 4.5])
+
+# After applying RandomCrop(crop_len=2.0)
+# Randomly crops to a 2-second window, e.g., [1.5, 3.5]
+transformed = transform(data)
+transformed.domain  # Interval(start=1.5, end=3.5)
+transformed.spikes.timestamps  # tensor([1.5, 2.3, 3.8]) (relative to new domain)
+```
+
+### Usage with Dataset
+
+```python
+from torch_brain.data import Dataset
+from torch_brain.transforms import Compose, RandomCrop
+
+dataset = Dataset(
+    data_path="path/to/data",
+    transform=Compose([
+        RandomCrop(crop_len=3.0),  # Crop to 3 seconds
+        # ... other transforms
+    ])
+)
+```
+
+### Use Cases
+
+- **Fixed-length inputs**: Ensure all training samples have the same temporal duration
+- **Data augmentation**: Generate multiple training samples from longer recordings
+- **Memory efficiency**: Process shorter windows for large datasets
+
+---
+
+## RandomOutputSampler
+
+Randomly samples a fixed number of output tokens (behavioral events) from the data. Useful for limiting the number of output targets during training.
+
+```python
+from torch_brain.transforms import RandomOutputSampler
+
+transform = RandomOutputSampler(num_output_tokens=100)
+sampled_data = transform(data)
+```
+
+### Parameters
+
+<ParamField path="num_output_tokens" type="int" required>
+  Maximum number of output tokens (behavioral event timestamps) to keep. If the data has fewer tokens than this value, all tokens are kept.
+</ParamField>
+
+### Behavior
+
+The transform performs the following operations:
+
+1. Accesses `data.behavior.timestamps` to get output event times
+2. If the number of timestamps ≤ `num_output_tokens`, returns data unchanged
+3. Otherwise, randomly samples `num_output_tokens` timestamps without replacement
+4. Creates a boolean mask for the selected timestamps
+5. Applies the mask to all attributes in `data.behavior`
+6. Returns the modified data
+
+<Note>
+  This transform assumes the data has a `behavior` attribute that is an `IrregularTimeSeries` object with a `timestamps` field.
+</Note>
+
+### Example: Before and After
+
+```python
+# Original data with 500 behavioral events
+len(data.behavior.timestamps)  # 500
+data.behavior.position.shape  # (500, 2)  # x, y coordinates
+
+# After applying RandomOutputSampler(num_output_tokens=100)
+transformed = transform(data)
+len(transformed.behavior.timestamps)  # 100
+transformed.behavior.position.shape  # (100, 2)
+```
+
+### Usage with Dataset
+
+```python
+from torch_brain.data import Dataset
+from torch_brain.transforms import Compose, RandomOutputSampler
+
+dataset = Dataset(
+    data_path="path/to/data",
+    transform=Compose([
+        RandomOutputSampler(num_output_tokens=128),
+        # ... other transforms
+    ])
+)
+```
+
+### Use Cases
+
+- **Computational efficiency**: Limit the number of output predictions per training step
+- **Balanced training**: Sample equally from trials with varying numbers of events
+- **Memory management**: Reduce GPU memory usage for models with large output heads
+
+<Warning>
+  The sampling is uniform random, so it may not preserve the temporal distribution of events. For temporally-aware sampling, consider using custom transforms.
+</Warning>

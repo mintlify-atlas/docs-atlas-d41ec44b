@@ -1,0 +1,359 @@
+---
+title: 'Utility Functions'
+description: 'Helper utilities for reproducibility, tokenization, encoding, and data preparation'
+---
+
+The `torch_brain.utils` module provides essential utility functions for working with neural data, including random seed management, token creation, sinusoidal encodings, and data preparation helpers.
+
+## Reproducibility
+
+### seed_everything
+
+```python
+torch_brain.utils.seed_everything(seed: int) -> None
+```
+
+Sets random seed across all libraries for full reproducibility. This function configures:
+- PyTorch CPU and CUDA random number generators
+- NumPy random state
+- Python's built-in random module
+- CUDA deterministic algorithms
+- Python hash seed
+
+<ParamField path="seed" type="int">
+  Random seed value. If `None`, no seed is set.
+</ParamField>
+
+<CodeGroup>
+```python Example
+import torch_brain
+
+# Set seed for reproducible results
+torch_brain.utils.seed_everything(42)
+
+# Now all random operations are deterministic
+model = torch_brain.models.NDT3(...)
+```
+</CodeGroup>
+
+<Note>
+Enabling deterministic mode may impact performance. CuDNN benchmarking is disabled to ensure reproducibility.
+</Note>
+
+## Tokenization
+
+### create_start_end_unit_tokens
+
+```python
+torch_brain.utils.create_start_end_unit_tokens(
+    unit_ids: np.ndarray,
+    start: float,
+    end: float
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]
+```
+
+Creates start-of-sequence and end-of-sequence tokens for each neural unit.
+
+<ParamField path="unit_ids" type="np.ndarray">
+  Array of unit identifiers
+</ParamField>
+
+<ParamField path="start" type="float">
+  Start time of the sequence
+</ParamField>
+
+<ParamField path="end" type="float">
+  End time of the sequence
+</ParamField>
+
+**Returns:** Tuple of `(token_type_index, unit_index, timestamps)`
+- `token_type_index`: Array indicating START (1) or END (2) token type
+- `unit_index`: Array of unit indices
+- `timestamps`: Array of corresponding timestamps
+
+<CodeGroup>
+```python Example
+import numpy as np
+import torch_brain
+
+unit_ids = np.array([0, 1, 2, 3])  # 4 units
+start_time = 0.0
+end_time = 10.0
+
+token_types, units, times = torch_brain.utils.create_start_end_unit_tokens(
+    unit_ids, start_time, end_time
+)
+
+# Creates 8 tokens total (2 per unit)
+print(token_types)  # [1, 2, 1, 2, 1, 2, 1, 2]
+print(units)        # [0, 0, 1, 1, 2, 2, 3, 3]
+print(times)        # [0., 10., 0., 10., 0., 10., 0., 10.]
+```
+</CodeGroup>
+
+### create_linspace_latent_tokens
+
+```python
+torch_brain.utils.create_linspace_latent_tokens(
+    start: float,
+    end: float,
+    step: float,
+    num_latents_per_step: int
+) -> Tuple[np.ndarray, np.ndarray]
+```
+
+Creates a sequence of latent tokens uniformly spaced in time.
+
+<ParamField path="start" type="float">
+  Start time of the sequence
+</ParamField>
+
+<ParamField path="end" type="float">
+  End time of the sequence
+</ParamField>
+
+<ParamField path="step" type="float">
+  Time step between token groups
+</ParamField>
+
+<ParamField path="num_latents_per_step" type="int">
+  Number of latent tokens per time step
+</ParamField>
+
+**Returns:** Tuple of `(latent_index, latent_timestamps)`
+- `latent_index`: Array of latent indices (0 to num_latents_per_step-1, repeated)
+- `latent_timestamps`: Array of timestamps for each latent
+
+<CodeGroup>
+```python Example
+import torch_brain
+
+# Create latent tokens every 50ms with 8 latents per step
+latent_idx, latent_times = torch_brain.utils.create_linspace_latent_tokens(
+    start=0.0,
+    end=1.0,      # 1 second
+    step=0.05,    # 50ms steps
+    num_latents_per_step=8
+)
+
+print(len(latent_times))  # 20 steps * 8 latents = 160 tokens
+print(latent_times[:8])   # First step centered at 0.025s
+```
+</CodeGroup>
+
+## Encoding
+
+### get_sinusoidal_encoding
+
+```python
+torch_brain.utils.get_sinusoidal_encoding(
+    x: np.ndarray,
+    y: np.ndarray,
+    dim: int
+) -> np.ndarray
+```
+
+Generates 2D sinusoidal positional encodings for spatial coordinates.
+
+<ParamField path="x" type="np.ndarray">
+  Array of x-coordinates
+</ParamField>
+
+<ParamField path="y" type="np.ndarray">
+  Array of y-coordinates
+</ParamField>
+
+<ParamField path="dim" type="int">
+  Dimensionality of encoding per coordinate (must be even). Total output dimension is `dim * 2`.
+</ParamField>
+
+**Returns:** Array of shape `(len(x), dim * 2)` containing sinusoidal encodings
+
+<CodeGroup>
+```python Example
+import numpy as np
+import torch_brain
+
+# Encode 2D positions
+x = np.array([0.1, 0.5, 0.9])
+y = np.array([0.2, 0.6, 0.8])
+
+encoding = torch_brain.utils.get_sinusoidal_encoding(x, y, dim=64)
+print(encoding.shape)  # (3, 128)
+```
+</CodeGroup>
+
+## Weighting
+
+### isin_interval
+
+```python
+torch_brain.utils.isin_interval(
+    timestamps: np.ndarray,
+    interval: Interval
+) -> np.ndarray
+```
+
+Checks if timestamps fall within any interval in an `Interval` object.
+
+<ParamField path="timestamps" type="np.ndarray">
+  Array of timestamps to check
+</ParamField>
+
+<ParamField path="interval" type="Interval">
+  `temporaldata.Interval` object to check against
+</ParamField>
+
+**Returns:** Boolean mask of same shape as `timestamps`
+
+### resolve_weights_based_on_interval_membership
+
+```python
+torch_brain.utils.resolve_weights_based_on_interval_membership(
+    timestamps: np.ndarray,
+    data: Data,
+    config: Optional[Dict[str, float]] = None
+) -> np.ndarray
+```
+
+Computes sample weights based on which time intervals timestamps fall within. This is useful for weighting different behavioral periods differently in the loss function.
+
+<ParamField path="timestamps" type="np.ndarray">
+  Array of timestamps
+</ParamField>
+
+<ParamField path="data" type="Data">
+  `temporaldata.Data` object containing interval definitions
+</ParamField>
+
+<ParamField path="config" type="Dict[str, float]" default="None">
+  Dictionary mapping interval names (with nested notation) to weight values
+</ParamField>
+
+**Returns:** Array of weights with same shape as `timestamps` (default 1.0)
+
+<CodeGroup>
+```python Example
+import torch_brain
+
+# Weight reach periods 5x more than other periods
+weights_config = {
+    'movement_periods.random_period': 1.0,
+    'movement_periods.hold_period': 0.1,
+    'movement_periods.reach_period': 5.0,
+    'movement_periods.return_period': 1.0,
+    'cursor_outlier_segments': 0.0  # Exclude outliers
+}
+
+weights = torch_brain.utils.resolve_weights_based_on_interval_membership(
+    timestamps=cursor_timestamps,
+    data=data,
+    config=weights_config
+)
+```
+</CodeGroup>
+
+<Warning>
+If intervals overlap, weights are **multiplied** together. For example, a timestamp in both a reach period (weight 5.0) and an outlier segment (weight 0.0) will have a final weight of 0.0.
+</Warning>
+
+## Data Preparation
+
+### prepare_for_readout
+
+```python
+torch_brain.utils.prepare_for_readout(
+    data: Data,
+    readout_spec: ModalitySpec
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+```
+
+Prepares readout data from a `Data` object according to the readout configuration. Handles normalization, weighting, and evaluation masking.
+
+<ParamField path="data" type="Data">
+  `temporaldata.Data` object with a `config["readout"]` dictionary
+</ParamField>
+
+<ParamField path="readout_spec" type="ModalitySpec">
+  Modality specification from the registry
+</ParamField>
+
+**Returns:** Tuple of `(timestamps, values, weights, eval_mask)`
+- `timestamps`: Array of timestamps
+- `values`: Normalized readout values
+- `weights`: Sample weights for loss computation
+- `eval_mask`: Boolean mask indicating evaluation samples
+
+**Required config keys:**
+- `readout_id`: Modality name registered in `MODALITY_REGISTRY`
+
+**Optional config keys:**
+- `timestamp_key`: Override default timestamp key
+- `value_key`: Override default value key
+- `normalize_mean`: Mean for z-scoring (scalar or list)
+- `normalize_std`: Standard deviation for z-scoring (scalar or list)
+- `weights`: Dictionary for interval-based weighting
+- `eval_interval`: Interval name for evaluation masking
+- `metrics`: List of metrics to compute
+
+<CodeGroup>
+```python Example
+import torch_brain
+from temporaldata import Data
+
+# Data config specifies readout configuration
+data = Data(
+    config={
+        'readout': {
+            'readout_id': 'cursor_velocity_2d',
+            'normalize_mean': [0.0, 0.0],
+            'normalize_std': [0.5, 0.5],
+            'weights': {
+                'movement_periods.reach_period': 5.0
+            },
+            'eval_interval': 'held_out_trials'
+        }
+    },
+    # ... data attributes ...
+)
+
+readout_spec = torch_brain.MODALITY_REGISTRY['cursor_velocity_2d']
+times, values, weights, eval_mask = torch_brain.utils.prepare_for_readout(
+    data, readout_spec
+)
+```
+</CodeGroup>
+
+## Miscellaneous
+
+### np_string_prefix
+
+```python
+torch_brain.utils.np_string_prefix(
+    prefix: str,
+    array: np.ndarray
+) -> np.ndarray
+```
+
+Adds a string prefix to each element of a NumPy string array. Handles compatibility across NumPy versions.
+
+<ParamField path="prefix" type="str">
+  String to prepend to each element
+</ParamField>
+
+<ParamField path="array" type="np.ndarray">
+  Array of strings or string-like objects
+</ParamField>
+
+**Returns:** New array with prefix added to each element
+
+<CodeGroup>
+```python Example
+import numpy as np
+import torch_brain
+
+unit_names = np.array(['neuron_1', 'neuron_2', 'neuron_3'])
+prefixed = torch_brain.utils.np_string_prefix('V1_', unit_names)
+print(prefixed)  # ['V1_neuron_1', 'V1_neuron_2', 'V1_neuron_3']
+```
+</CodeGroup>

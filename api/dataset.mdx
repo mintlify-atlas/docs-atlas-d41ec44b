@@ -1,0 +1,362 @@
+---
+title: torch_brain.data.Dataset
+description: Lazily-loaded dataset class for neural recordings
+---
+
+<Warning>
+  `torch_brain.data.Dataset` is **deprecated** in favor of the newer `torch_brain.dataset.Dataset`, and will be removed in a future release.
+</Warning>
+
+## Overview
+
+The `Dataset` class abstracts a collection of lazily-loaded Data objects, where each data object corresponds to a full recording. Recordings are never fully loaded into memory, but rather lazy-loaded on-the-fly from disk.
+
+### Key Features
+
+- **Lazy Loading in Time**: Only the requested time interval is loaded, without loading the entire recording
+- **Lazy Loading of Attributes**: Attributes are not loaded until requested
+- **Flexible Indexing**: Index by recording ID and time intervals using `DatasetIndex`
+- **Split Support**: Load subsets of data based on predefined splits (train/val/test)
+
+## Class Definition
+
+```python
+class Dataset(torch.utils.data.Dataset)
+```
+
+## Constructor
+
+```python
+Dataset(
+    root,
+    *,
+    config=None,
+    recording_id=None,
+    split=None,
+    transform=None,
+    unit_id_prefix_fn=default_unit_id_prefix_fn,
+    session_id_prefix_fn=default_session_id_prefix_fn,
+    subject_id_prefix_fn=default_subject_id_prefix_fn,
+    keep_files_open=True
+)
+```
+
+<ParamField path="root" type="str" required>
+  The root directory of the dataset containing HDF5 files.
+</ParamField>
+
+<ParamField path="config" type="Optional[str]">
+  Path to configuration file specifying sessions to include. Cannot be used with `recording_id`. The config can be:
+  - Path to a YAML/JSON configuration file
+  - An OmegaConf ListConfig object
+</ParamField>
+
+<ParamField path="recording_id" type="Optional[str]">
+  Single recording ID to include. Cannot be used with `config`. Format is typically `<brainset_id>/<session_id>`.
+</ParamField>
+
+<ParamField path="split" type="Optional[str]">
+  The split of the dataset (e.g., "train", "val", "test"). Used to determine sampling intervals for each session based on predefined splits.
+</ParamField>
+
+<ParamField path="transform" type="Optional[Callable[[Data], Any]]">
+  A transform to apply to the data. Should be a callable that takes a Data object and returns a transformed Data object.
+</ParamField>
+
+<ParamField path="unit_id_prefix_fn" type="Callable[[Data], str]" default="lambda data: f'{data.brainset.id}/{data.session.id}/'">
+  Function to generate prefix strings for unit IDs to ensure uniqueness across the dataset. Takes a Data object as input and returns a string prefix.
+</ParamField>
+
+<ParamField path="session_id_prefix_fn" type="Callable[[Data], str]" default="lambda data: f'{data.brainset.id}/'">
+  Function to generate prefix strings for session IDs. Takes a Data object as input and returns a string prefix.
+</ParamField>
+
+<ParamField path="subject_id_prefix_fn" type="Callable[[Data], str]" default="lambda data: f'{data.brainset.id}/'">
+  Function to generate prefix strings for subject IDs. Takes a Data object as input and returns a string prefix.
+</ParamField>
+
+<ParamField path="keep_files_open" type="bool" default="True">
+  Whether to keep HDF5 files open. Keeps references to files without loading data into memory, improving access speed.
+</ParamField>
+
+**Example:**
+```python
+from torch_brain.data import Dataset
+
+# Load dataset with config file
+dataset = Dataset(
+    root="/path/to/data",
+    config="config.yaml",
+    split="train"
+)
+
+# Load single recording
+dataset = Dataset(
+    root="/path/to/data",
+    recording_id="brainset1/session1"
+)
+```
+
+## Methods
+
+### get
+
+```python
+Dataset.get(recording_id: str, start: float, end: float) -> Data
+```
+
+Main method to extract a slice from a recording. Returns a Data object containing all data for the specified recording between the given times.
+
+<ParamField path="recording_id" type="str" required>
+  The recording ID of the slice, usually in format `<brainset_id>/<session_id>`.
+</ParamField>
+
+<ParamField path="start" type="float" required>
+  Start time of the slice in seconds.
+</ParamField>
+
+<ParamField path="end" type="float" required>
+  End time of the slice in seconds.
+</ParamField>
+
+<ResponseField name="output" type="Data">
+  Data object containing the requested time slice with prefixed IDs and config applied.
+</ResponseField>
+
+**Example:**
+```python
+# Get 5 second window from recording
+data_slice = dataset.get(
+    recording_id="brainset1/session1",
+    start=100.0,
+    end=105.0
+)
+```
+
+### get_recording_data
+
+```python
+Dataset.get_recording_data(recording_id: str) -> Data
+```
+
+Returns the data object for a recording. If a split is specified, the data is sliced to allowed sampling intervals to avoid data leakage.
+
+<ParamField path="recording_id" type="str" required>
+  The recording ID to retrieve.
+</ParamField>
+
+<ResponseField name="output" type="Data">
+  Complete Data object for the recording, potentially sliced to split intervals.
+</ResponseField>
+
+<Warning>
+  This method might load the full data object into memory. Avoid multiple calls if possible.
+</Warning>
+
+### get_sampling_intervals
+
+```python
+Dataset.get_sampling_intervals() -> Dict[str, Interval]
+```
+
+Returns a dictionary of sampling intervals for each recording. These intervals represent the time ranges that can be sampled from each recording.
+
+<ResponseField name="output" type="Dict[str, Interval]">
+  Dictionary mapping recording IDs to their sampling intervals. Intervals change based on the split.
+</ResponseField>
+
+**Example:**
+```python
+intervals = dataset.get_sampling_intervals()
+# {'brainset1/session1': Interval([0, 1000], [500, 1500]), ...}
+```
+
+### get_recording_config_dict
+
+```python
+Dataset.get_recording_config_dict() -> Dict[str, Dict]
+```
+
+Returns configuration dictionaries for each recording in the dataset.
+
+<ResponseField name="output" type="Dict[str, Dict]">
+  Dictionary mapping recording IDs to their configuration dictionaries.
+</ResponseField>
+
+### get_unit_ids
+
+```python
+Dataset.get_unit_ids() -> List[str]
+```
+
+Returns all unit IDs in the dataset with prefixes applied.
+
+<ResponseField name="output" type="List[str]">
+  List of all unit IDs across all recordings in the dataset.
+</ResponseField>
+
+### get_session_ids
+
+```python
+Dataset.get_session_ids() -> List[str]
+```
+
+Returns all session IDs in the dataset with prefixes applied, sorted alphabetically.
+
+<ResponseField name="output" type="List[str]">
+  Sorted list of session IDs.
+</ResponseField>
+
+### get_subject_ids
+
+```python
+Dataset.get_subject_ids() -> List[str]
+```
+
+Returns all unique subject IDs in the dataset with prefixes applied, sorted alphabetically.
+
+<ResponseField name="output" type="List[str]">
+  Sorted list of unique subject IDs.
+</ResponseField>
+
+### get_brainset_ids
+
+```python
+Dataset.get_brainset_ids() -> List[str]
+```
+
+Returns all unique brainset IDs in the dataset, sorted alphabetically.
+
+<ResponseField name="output" type="List[str]">
+  Sorted list of unique brainset IDs.
+</ResponseField>
+
+### disable_data_leakage_check
+
+```python
+Dataset.disable_data_leakage_check()
+```
+
+Disables the automatic data leakage check between splits.
+
+<Warning>
+  Only use this if you are absolutely sure there is no leakage between the current split and other splits (e.g., the test split).
+</Warning>
+
+**Example:**
+```python
+dataset.disable_data_leakage_check()
+```
+
+### \_close_open_files
+
+```python
+Dataset._close_open_files()
+```
+
+Closes all open HDF5 files and deletes open data objects. Useful when you are done with the dataset.
+
+## Special Methods
+
+### \_\_getitem\_\_
+
+```python
+Dataset.__getitem__(index: DatasetIndex) -> Any
+```
+
+Retrieve a sample using a `DatasetIndex` object. Applies the transform if specified.
+
+<ParamField path="index" type="DatasetIndex" required>
+  Index specifying recording_id, start, and end times.
+</ParamField>
+
+<ResponseField name="output" type="Any">
+  Data sample, potentially transformed.
+</ResponseField>
+
+**Example:**
+```python
+from torch_brain.data.dataset import DatasetIndex
+
+index = DatasetIndex(
+    recording_id="brainset1/session1",
+    start=100.0,
+    end=105.0
+)
+sample = dataset[index]
+```
+
+### \_\_len\_\_
+
+```python
+Dataset.__len__()
+```
+
+Not implemented - raises `NotImplementedError`. Use a sampler to define dataset length.
+
+### \_\_iter\_\_
+
+```python
+Dataset.__iter__()
+```
+
+Not implemented - raises `NotImplementedError`. Use a sampler to iterate over the dataset.
+
+## DatasetIndex
+
+```python
+@dataclass
+class DatasetIndex:
+    recording_id: str
+    start: float
+    end: float
+```
+
+Dataclass for indexing the dataset by recording ID and time interval.
+
+<ParamField path="recording_id" type="str" required>
+  Recording identifier, typically `<brainset_id>/<session_id>`.
+</ParamField>
+
+<ParamField path="start" type="float" required>
+  Start time in seconds.
+</ParamField>
+
+<ParamField path="end" type="float" required>
+  End time in seconds.
+</ParamField>
+
+## Usage with Samplers
+
+The Dataset class is designed to work with samplers that generate `DatasetIndex` objects:
+
+```python
+from torch_brain.data import Dataset
+from torch_brain.data.sampler import RandomFixedWindowSampler
+from torch.utils.data import DataLoader
+
+# Create dataset
+dataset = Dataset(
+    root="/path/to/data",
+    config="config.yaml",
+    split="train"
+)
+
+# Create sampler
+sampler = RandomFixedWindowSampler(
+    sampling_intervals=dataset.get_sampling_intervals(),
+    window_length=5.0
+)
+
+# Create dataloader
+loader = DataLoader(dataset, sampler=sampler, batch_size=32)
+
+for batch in loader:
+    # Training loop
+    pass
+```
+
+## See Also
+
+- [Samplers](/api/samplers) - Sampling strategies for creating batches
+- [Collation Functions](/api/data) - Advanced collation utilities

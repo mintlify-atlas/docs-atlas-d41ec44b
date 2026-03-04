@@ -1,97 +1,284 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: Torch Brain documentation
+mode: custom
 ---
 
-## Setting up
+<div className="relative overflow-hidden bg-gradient-to-br from-[#0f1117] via-[#1a1d27] to-[#0f1117] dark:from-[#0f1117] dark:via-[#1a1d27] dark:to-[#0f1117]">
+  <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxwYXRoIGQ9Ik0zNiAxOGMzLjMxNCAwIDYgMi42ODYgNiA2cy0yLjY4NiA2LTYgNi02LTIuNjg2LTYtNiAyLjY4Ni02IDYtNnoiIHN0cm9rZT0iIzVkNmM3NSIgc3Ryb2tlLXdpZHRoPSIuNSIgb3BhY2l0eT0iLjEiLz48L2c+PC9zdmc+')] opacity-30"></div>
+  
+  <div className="relative max-w-7xl mx-auto px-6 sm:px-8 py-20 sm:py-24 lg:py-32">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+      <div className="lg:col-span-7">
+        <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-white mb-6">
+          Deep learning for neuroscience
+        </h1>
+        <p className="text-lg sm:text-xl text-gray-300 mb-8 max-w-2xl">
+          A PyTorch library for training neural population decoders with multi-recording support, advanced data samplers, and state-of-the-art models like POYO.
+        </p>
+        <div className="flex flex-wrap gap-4">
+          <a
+            href="/quickstart"
+            className="inline-flex items-center px-6 py-3 rounded-lg bg-[#5d6c75] hover:bg-[#6d7c85] text-white font-semibold transition-colors"
+          >
+            Get started
+            <svg className="ml-2 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </a>
+          <a
+            href="/api/data"
+            className="inline-flex items-center px-6 py-3 rounded-lg border border-white/30 bg-white/10 hover:bg-white/20 text-white font-semibold transition-colors"
+          >
+            API reference
+          </a>
+        </div>
+      </div>
+      <div className="lg:col-span-5 hidden lg:block">
+        <div className="relative">
+          <div className="absolute inset-0 bg-gradient-to-r from-[#5d6c75] to-[#b5bec1] opacity-20 blur-3xl rounded-full"></div>
+          <img 
+            src="https://media.brand.dev/ff927a99-aba2-44f8-8f6a-5dca07b83aeb.png" 
+            alt="Torch Brain"
+            noZoom
+            className="relative w-full max-w-md mx-auto"
+          />
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 
-Get your documentation site up and running in minutes.
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-2xl sm:text-3xl font-semibold text-gray-900 dark:text-white mb-4">
+    Quick start
+  </h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">
+    Get up and running with torch_brain in minutes
+  </p>
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+  <Steps>
+    <Step title="Install the package">
+      Install torch_brain using pip in your Python environment (Python ≥ 3.10 required):
 
-## Make it yours
+      ```bash
+      pip install torch_brain
+      ```
 
-Design a docs site that looks great and empowers your users.
+      For development, install with optional dependencies:
 
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
-  </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
-  </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
-  </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
-  </Card>
-</Columns>
+      ```bash
+      pip install -e ".[dev]"
+      ```
+    </Step>
 
-## Create beautiful pages
+    <Step title="Prepare your neural data">
+      torch_brain works with neural recordings from multiple sessions. Use the companion [brainsets](https://github.com/neuro-galaxy/brainsets) library to access curated datasets:
 
-Everything you need to create world-class documentation.
+      ```bash
+      brainsets prepare perich_miller_population_2018
+      ```
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+      This downloads and prepares a multi-session motor cortex dataset ready for training.
+    </Step>
 
-## Need inspiration?
+    <Step title="Train a model">
+      Train a POYO model for neural population decoding:
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+      ```python
+      import torch
+      from torch_brain.models import POYO
+      from torch_brain.data import Dataset
+
+      # Load your neural data
+      dataset = Dataset(
+          data_path="path/to/neural/recordings",
+          modalities=["spikes", "behavior"]
+      )
+
+      # Initialize POYO model
+      model = POYO(
+          sequence_length=2.0,
+          dim=256,
+          num_latents=128,
+          num_self_attn_layers=6
+      )
+
+      # Train with PyTorch Lightning or your training loop
+      # See the guides for complete training examples
+      ```
+
+      <Accordion title="Expected output">
+        The model will process spike trains from multiple neurons and sessions, learning a unified representation for downstream decoding tasks.
+      </Accordion>
+    </Step>
+  </Steps>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-2xl sm:text-3xl font-semibold text-gray-900 dark:text-white mb-4">
+    Explore by topic
+  </h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">
+    Browse documentation organized by your workflow
+  </p>
+
+  <CardGroup cols={2}>
+    <Card title="Core concepts" icon="brain" href="/concepts/data-loading">
+      Learn about data loading, samplers, transforms, and modality handling
+    </Card>
+    <Card title="Models" icon="network-wired" href="/models/overview">
+      Explore POYO, CaPOYO, and other neural population decoding models
+    </Card>
+    <Card title="Training guides" icon="graduation-cap" href="/guides/training">
+      Step-by-step guides for training models on your neural data
+    </Card>
+    <Card title="Custom datasets" icon="database" href="/guides/custom-datasets">
+      Integrate your own neural recordings and behavioral data
+    </Card>
+  </CardGroup>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-2xl sm:text-3xl font-semibold text-gray-900 dark:text-white mb-4">
+    Key features
+  </h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">
+    Built for neuroscience research at scale
+  </p>
+
+  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <a href="/concepts/data-loading" className="group block rounded-2xl border border-gray-200 dark:border-[#27272a] hover:border-[#5d6c75] dark:hover:border-[#5d6c75] overflow-hidden no-underline transition-colors">
+      <div className="p-6 bg-white dark:bg-[#1a1d27]">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-10 h-10 rounded-lg bg-[#5d6c75]/10 flex items-center justify-center">
+            <svg className="w-5 h-5 text-[#5d6c75]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+            </svg>
+          </div>
+          <h3 className="text-base font-semibold text-gray-900 dark:text-white">Multi-recording training</h3>
+        </div>
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          Train on multiple sessions simultaneously with optimized data loading that only loads data when needed
+        </p>
+        <div className="mt-3 flex items-center text-sm text-gray-600 dark:text-gray-400 group-hover:text-[#5d6c75] transition-colors">
+          Learn more
+          <svg className="ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </div>
+      </div>
+    </a>
+
+    <a href="/concepts/samplers" className="group block rounded-2xl border border-gray-200 dark:border-[#27272a] hover:border-[#5d6c75] dark:hover:border-[#5d6c75] overflow-hidden no-underline transition-colors">
+      <div className="p-6 bg-white dark:bg-[#1a1d27]">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-10 h-10 rounded-lg bg-[#5d6c75]/10 flex items-center justify-center">
+            <svg className="w-5 h-5 text-[#5d6c75]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+          </div>
+          <h3 className="text-base font-semibold text-gray-900 dark:text-white">Advanced samplers</h3>
+        </div>
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          Arbitrary temporal slicing with fixed-window and variable-length samplers for flexible data access
+        </p>
+        <div className="mt-3 flex items-center text-sm text-gray-600 dark:text-gray-400 group-hover:text-[#5d6c75] transition-colors">
+          Learn more
+          <svg className="ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </div>
+      </div>
+    </a>
+
+    <a href="/api/nn/attention" className="group block rounded-2xl border border-gray-200 dark:border-[#27272a] hover:border-[#5d6c75] dark:hover:border-[#5d6c75] overflow-hidden no-underline transition-colors">
+      <div className="p-6 bg-white dark:bg-[#1a1d27]">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-10 h-10 rounded-lg bg-[#5d6c75]/10 flex items-center justify-center">
+            <svg className="w-5 h-5 text-[#5d6c75]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+            </svg>
+          </div>
+          <h3 className="text-base font-semibold text-gray-900 dark:text-white">Custom neural modules</h3>
+        </div>
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          Rotary attention, infinite vocab embeddings, multi-output readouts, and more specialized layers
+        </p>
+        <div className="mt-3 flex items-center text-sm text-gray-600 dark:text-gray-400 group-hover:text-[#5d6c75] transition-colors">
+          Learn more
+          <svg className="ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </div>
+      </div>
+    </a>
+
+    <a href="/models/poyo" className="group block rounded-2xl border border-gray-200 dark:border-[#27272a] hover:border-[#5d6c75] dark:hover:border-[#5d6c75] overflow-hidden no-underline transition-colors">
+      <div className="p-6 bg-white dark:bg-[#1a1d27]">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-10 h-10 rounded-lg bg-[#5d6c75]/10 flex items-center justify-center">
+            <svg className="w-5 h-5 text-[#5d6c75]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+            </svg>
+          </div>
+          <h3 className="text-base font-semibold text-gray-900 dark:text-white">POYO models</h3>
+        </div>
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          State-of-the-art neural population decoding framework published at NeurIPS 2023
+        </p>
+        <div className="mt-3 flex items-center text-sm text-gray-600 dark:text-gray-400 group-hover:text-[#5d6c75] transition-colors">
+          Learn more
+          <svg className="ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </div>
+      </div>
+    </a>
+  </div>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-2xl sm:text-3xl font-semibold text-gray-900 dark:text-white mb-4">
+    Community and support
+  </h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">
+    Join the community and get help with your projects
+  </p>
+
+  <CardGroup cols={2}>
+    <Card title="Discord community" icon="discord" href="https://discord.gg/kQNKA6B8ZC">
+      Join our Discord server to ask questions and share your work
+    </Card>
+    <Card title="GitHub discussions" icon="github" href="https://github.com/neuro-galaxy/torch_brain/discussions">
+      Browse discussions and contribute to the project
+    </Card>
+    <Card title="Report issues" icon="bug" href="https://github.com/neuro-galaxy/torch_brain/issues">
+      Found a bug? Report it on GitHub Issues
+    </Card>
+    <Card title="Citation" icon="book" href="/introduction#cite">
+      Learn how to cite torch_brain in your research
+    </Card>
+  </CardGroup>
+</div>
+
+<div className="mt-20 mb-16 max-w-5xl mx-auto px-6">
+  <div className="rounded-2xl border border-gray-200 dark:border-[#27272a] bg-gradient-to-br from-white to-gray-50 dark:from-[#1a1d27] dark:to-[#242838] p-8 sm:p-12">
+    <div className="max-w-2xl">
+      <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-4">
+        Ready to get started?
+      </h2>
+      <p className="text-base text-gray-600 dark:text-gray-400 mb-6">
+        Install torch_brain and train your first neural population decoder in minutes.
+      </p>
+      <a
+        href="/quickstart"
+        className="inline-flex items-center px-6 py-3 rounded-lg bg-[#5d6c75] hover:bg-[#6d7c85] text-white font-semibold transition-colors"
+      >
+        View quickstart guide
+        <svg className="ml-2 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+      </a>
+    </div>
+  </div>
+</div>

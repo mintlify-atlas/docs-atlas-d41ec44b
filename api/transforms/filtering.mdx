@@ -1,0 +1,346 @@
+---
+title: Filtering Transforms
+description: Unit-level filtering and dropout transforms for neural data
+---
+
+Filtering transforms modify neural data by selectively keeping or dropping units (neurons). These are useful for data augmentation, handling variable unit counts, and filtering based on unit properties.
+
+## UnitDropout
+
+Randomly drops units from the data to augment training samples and handle variable unit counts. The number of units to keep is sampled from a triangular distribution that favors keeping a moderate number of units.
+
+```python
+from torch_brain.transforms import UnitDropout
+
+transform = UnitDropout(
+    field="spikes",
+    min_units=20,
+    mode_units=100,
+    max_units=300
+)
+
+augmented_data = transform(data)
+```
+
+### Parameters
+
+<ParamField path="field" type="str" default="spikes">
+  The field to apply dropout to. Can be a nested attribute using dot notation (e.g., `"spikes"` or `"lfp.data"`).
+</ParamField>
+
+<ParamField path="reset_index" type="bool" default="true">
+  If `True`, reindexes the unit indices to be contiguous [0, 1, ..., n-1] after dropout.
+</ParamField>
+
+<ParamField path="min_units" type="int" default="20">
+  Minimum number of units to keep. If the population has fewer units than this, all units are kept.
+</ParamField>
+
+<ParamField path="mode_units" type="int" default="100">
+  Mode (peak) of the triangular distribution. This is the most likely number of units to sample.
+</ParamField>
+
+<ParamField path="max_units" type="int" default="300">
+  Maximum number of units to sample.
+</ParamField>
+
+<ParamField path="tail_right" type="int" optional>
+  Right tail of the triangular distribution. If not provided, defaults to `max_units`. Controls where the distribution begins to flatten.
+</ParamField>
+
+<ParamField path="peak" type="float" default="4">
+  Height of the peak of the triangular distribution. Higher values create a sharper peak around `mode_units`.
+</ParamField>
+
+<ParamField path="M" type="float" default="10">
+  Normalization constant for the rejection sampling proposal distribution.
+</ParamField>
+
+<ParamField path="max_attempts" type="int" default="100">
+  Maximum number of attempts for rejection sampling. If exceeded, all units are kept.
+</ParamField>
+
+<ParamField path="seed" type="int" optional>
+  Random seed for reproducibility.
+</ParamField>
+
+### Behavior
+
+The transform performs the following operations:
+
+1. Samples the number of units to keep from a `TriangleDistribution`
+2. Randomly selects that many units to keep
+3. For `IrregularTimeSeries` (e.g., spike data):
+   - Filters out spikes from dropped units
+   - Optionally reindexes unit indices to be contiguous
+4. For `RegularTimeSeries` (e.g., LFP data):
+   - Drops the corresponding columns from the data array
+5. Updates `data.units` to reflect the kept units
+
+### Example: Before and After
+
+```python
+# Original data with 200 units
+len(data.units.id)  # 200
+data.spikes.unit_index  # array([0, 0, 1, 2, 2, 3, ...])
+len(data.spikes.timestamps)  # 10000 spikes
+
+# After applying UnitDropout
+transformed = transform(data)
+len(transformed.units.id)  # 95 (sampled from distribution)
+transformed.spikes.unit_index  # array([0, 0, 1, 2, 2, ...]) (reindexed)
+len(transformed.spikes.timestamps)  # ~4750 spikes (approximately 95/200 * 10000)
+```
+
+### Usage with Dataset
+
+```python
+from torch_brain.data import Dataset
+from torch_brain.transforms import UnitDropout
+
+dataset = Dataset(
+    data_path="path/to/data",
+    transform=UnitDropout(
+        field="spikes",
+        min_units=50,
+        mode_units=150,
+        max_units=400,
+        seed=42
+    )
+)
+```
+
+### Use Cases
+
+- **Handling variable unit counts**: Train models that work with different numbers of recorded units
+- **Data augmentation**: Create diverse training samples from the same recording
+- **Robustness**: Make models robust to unit dropout in online decoding scenarios
+- **Simulation**: Simulate recordings with fewer units for transfer learning
+
+---
+
+## TriangleDistribution
+
+A triangular probability distribution used by `UnitDropout` to sample the number of units to keep. The distribution has a peak at `mode_units` and extends from `min_units` to `max_units`.
+
+### Mathematical Definition
+
+The unnormalized density function is:
+
+$$
+f(x) = \begin{cases}
+0 & \text{if } x < \text{min_units} \\
+1 + (\text{peak} - 1) \cdot \frac{x - \text{min_units}}{\text{mode_units} - \text{min_units}} & \text{if } \text{min_units} \leq x \leq \text{mode_units} \\
+\text{peak} - (\text{peak} - 1) \cdot \frac{x - \text{mode_units}}{\text{tail_right} - \text{mode_units}} & \text{if } \text{mode_units} \leq x \leq \text{tail_right} \\
+1 & \text{if } \text{tail_right} \leq x \leq \text{max_units} \\
+0 & \text{otherwise}
+\end{cases}
+$$
+
+The distribution uses rejection sampling to generate samples.
+
+### Visualization
+
+The distribution creates an asymmetric triangular shape that:
+- Starts at `min_units` with density 1
+- Increases linearly to `peak` at `mode_units`
+- Decreases linearly to density 1 at `tail_right`
+- Remains flat at density 1 until `max_units`
+
+This shape favors sampling around `mode_units` while still allowing values across the full range.
+
+---
+
+## UnitFilter
+
+Filters units based on a custom mask function. Provides fine-grained control over which units to keep or drop based on unit properties.
+
+```python
+from torch_brain.transforms import UnitFilter
+
+# Keep only units with high firing rates
+def high_firing_rate(units):
+    return units.firing_rate > 5.0  # Returns boolean mask
+
+transform = UnitFilter(
+    mask_fn=high_firing_rate,
+    field="spikes",
+    reset_index=True
+)
+
+filtered_data = transform(data)
+```
+
+### Parameters
+
+<ParamField path="mask_fn" type="Callable[[ArrayDict], np.ndarray]" required>
+  A function that takes `data.units` (an `ArrayDict`) and returns a boolean numpy array. `True` values indicate units to keep, `False` values indicate units to drop.
+</ParamField>
+
+<ParamField path="field" type="str" required>
+  The field to apply the filter to (e.g., `"spikes"`).
+</ParamField>
+
+<ParamField path="reset_index" type="bool" default="true">
+  If `True`, reindexes the unit indices to be contiguous after filtering.
+</ParamField>
+
+### Behavior
+
+The transform performs the following operations:
+
+1. Calls `mask_fn(data.units)` to get a boolean mask
+2. Filters `data.units` to keep only units where the mask is `True`
+3. For `IrregularTimeSeries`:
+   - Filters out events (e.g., spikes) from dropped units
+   - Optionally reindexes unit indices
+4. Updates the specified field with filtered data
+
+<Note>
+  Currently only supports `IrregularTimeSeries`. Support for `RegularTimeSeries` is planned.
+</Note>
+
+### Example: Custom Filtering
+
+```python
+# Keep only units from a specific brain region
+def keep_m1_units(units):
+    return np.array([region.startswith('M1') for region in units.brain_region])
+
+transform = UnitFilter(
+    mask_fn=keep_m1_units,
+    field="spikes"
+)
+
+# Keep units with at least 100 spikes in the trial
+def min_spike_count(units):
+    return units.spike_count >= 100
+
+transform = UnitFilter(
+    mask_fn=min_spike_count,
+    field="spikes"
+)
+```
+
+### Usage with Dataset
+
+```python
+from torch_brain.data import Dataset
+from torch_brain.transforms import UnitFilter
+
+# Filter to keep only well-isolated units
+def quality_filter(units):
+    return units.isolation_quality > 0.8
+
+dataset = Dataset(
+    data_path="path/to/data",
+    transform=UnitFilter(
+        mask_fn=quality_filter,
+        field="spikes",
+        reset_index=True
+    )
+)
+```
+
+---
+
+## UnitFilterById
+
+Filters units based on their ID using regular expression pattern matching. Subclass of `UnitFilter` that provides a convenient interface for ID-based filtering.
+
+```python
+from torch_brain.transforms import UnitFilterById
+
+# Keep only units from M1 region (e.g., IDs like "M1_u001", "M1_u002")
+transform = UnitFilterById(
+    pattern=r"^M1_",
+    field="spikes",
+    keep_matches=True
+)
+
+filtered_data = transform(data)
+```
+
+### Parameters
+
+<ParamField path="pattern" type="Union[str, Pattern]" required>
+  Regular expression pattern to match against unit IDs. Can be a string (which will be compiled) or a compiled `re.Pattern` object.
+</ParamField>
+
+<ParamField path="field" type="str" required>
+  The field to apply the filter to (e.g., `"spikes"`).
+</ParamField>
+
+<ParamField path="reset_index" type="bool" default="true">
+  If `True`, reindexes the unit indices to be contiguous after filtering.
+</ParamField>
+
+<ParamField path="keep_matches" type="bool" default="true">
+  If `True`, keeps units that match the pattern. If `False`, drops units that match (keeps non-matching units).
+</ParamField>
+
+### Behavior
+
+The transform performs the following operations:
+
+1. Compiles the pattern if it's a string
+2. Tests each unit ID against the pattern using `pattern.search(unit_id)`
+3. Creates a boolean mask based on matches and the `keep_matches` parameter
+4. Applies the same filtering logic as `UnitFilter`
+
+### Example: Pattern Matching
+
+```python
+# Keep units from primary motor cortex
+transform = UnitFilterById(
+    pattern=r"^M1",  # IDs starting with "M1"
+    field="spikes",
+    keep_matches=True
+)
+
+# Exclude units from a specific array
+transform = UnitFilterById(
+    pattern=r"array_02",  # IDs containing "array_02"
+    field="spikes",
+    keep_matches=False  # Drop matches
+)
+
+# Keep units with specific naming convention
+transform = UnitFilterById(
+    pattern=r"_ch\d{3}_unit\d{2}$",  # e.g., "_ch001_unit01"
+    field="spikes",
+    keep_matches=True
+)
+```
+
+### Usage with Dataset
+
+```python
+from torch_brain.data import Dataset
+from torch_brain.transforms import UnitFilterById, Compose
+
+dataset = Dataset(
+    data_path="path/to/data",
+    transform=Compose([
+        # First, keep only M1 units
+        UnitFilterById(
+            pattern=r"^M1_",
+            field="spikes",
+            keep_matches=True
+        ),
+        # Then apply other transforms
+        # ...
+    ])
+)
+```
+
+### Use Cases
+
+- **Region-specific analysis**: Filter to specific brain regions based on naming conventions
+- **Array selection**: Include/exclude specific electrode arrays
+- **Quality control**: Filter out units with specific ID patterns indicating low quality
+- **Multi-session alignment**: Select units that exist across sessions based on ID patterns
+
+<Tip>
+  Use raw strings (prefix with `r`) for regex patterns to avoid escaping backslashes: `r"\d+"` instead of `"\\d+"`.
+</Tip>

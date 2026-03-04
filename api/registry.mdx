@@ -1,0 +1,363 @@
+---
+title: 'Modality Registry'
+description: 'Global registry system for managing neural and behavioral modalities'
+---
+
+The modality registry provides a centralized system for defining and accessing different data modalities (cursor position, neural activity, visual stimuli, etc.) used in neural decoding tasks.
+
+## Overview
+
+The registry pattern allows you to:
+- Define modalities once and reference them throughout your codebase
+- Associate metadata (dimension, data type, loss function) with each modality
+- Automatically assign unique IDs to modalities
+- Access modality specifications by name or ID
+
+## Core Components
+
+### DataType
+
+```python
+class DataType(Enum):
+    CONTINUOUS = 0   # Continuous-valued variables
+    BINARY = 1       # Binary variables
+    MULTINOMIAL = 2  # Multi-class variables
+    MULTILABEL = 3   # Multi-label variables
+```
+
+Enum defining the possible data types for modalities.
+
+### ModalitySpec
+
+```python
+@dataclass
+class ModalitySpec:
+    id: int
+    dim: int
+    type: DataType
+    timestamp_key: str
+    value_key: str
+    loss_fn: Callable
+```
+
+Dataclass specifying a modality's properties.
+
+<ParamField path="id" type="int">
+  Unique numeric identifier (automatically assigned)
+</ParamField>
+
+<ParamField path="dim" type="int">
+  Dimensionality of the modality (e.g., 2 for 2D position, 8 for 8 orientations)
+</ParamField>
+
+<ParamField path="type" type="DataType">
+  Data type enum (CONTINUOUS, BINARY, MULTINOMIAL, or MULTILABEL)
+</ParamField>
+
+<ParamField path="timestamp_key" type="str">
+  Nested key to access timestamps in the data object (e.g., `"cursor.timestamps"`)
+</ParamField>
+
+<ParamField path="value_key" type="str">
+  Nested key to access values in the data object (e.g., `"cursor.vel"`)
+</ParamField>
+
+<ParamField path="loss_fn" type="Callable">
+  Loss function instance for this modality
+</ParamField>
+
+## Functions
+
+### register_modality
+
+```python
+torch_brain.register_modality(
+    name: str,
+    **kwargs: Any
+) -> int
+```
+
+Registers a new modality in the global registry.
+
+<ParamField path="name" type="str" required>
+  Unique identifier for this modality
+</ParamField>
+
+<ParamField path="dim" type="int" required>
+  Dimensionality of the modality
+</ParamField>
+
+<ParamField path="type" type="DataType" required>
+  Data type (CONTINUOUS, BINARY, MULTINOMIAL, or MULTILABEL)
+</ParamField>
+
+<ParamField path="loss_fn" type="Callable" required>
+  Loss function instance (e.g., `torch_brain.nn.loss.MSELoss()`)
+</ParamField>
+
+<ParamField path="timestamp_key" type="str" required>
+  Key to access timestamps in data object
+</ParamField>
+
+<ParamField path="value_key" type="str" required>
+  Key to access values in data object
+</ParamField>
+
+**Returns:** Unique numeric ID assigned to the modality
+
+**Raises:** `ValueError` if a modality with the same name already exists
+
+<CodeGroup>
+```python Basic Example
+import torch_brain
+from torch_brain.registry import DataType
+
+# Register a custom modality
+modality_id = torch_brain.register_modality(
+    "hand_velocity_3d",
+    dim=3,
+    type=DataType.CONTINUOUS,
+    timestamp_key="hand.timestamps",
+    value_key="hand.velocity",
+    loss_fn=torch_brain.nn.loss.MSELoss()
+)
+
+print(f"Registered modality with ID: {modality_id}")
+```
+
+```python Visual Stimulus Example
+import torch_brain
+from torch_brain.registry import DataType
+
+# Register orientation discrimination task
+torch_brain.register_modality(
+    "gabor_orientation_8",
+    dim=8,  # 8 possible orientations
+    type=DataType.MULTINOMIAL,
+    timestamp_key="stimulus.timestamps",
+    value_key="stimulus.orientation_class",
+    loss_fn=torch_brain.nn.loss.CrossEntropyLoss()
+)
+```
+
+```python Multi-Label Example
+import torch_brain
+from torch_brain.registry import DataType
+
+# Register multi-object detection
+torch_brain.register_modality(
+    "scene_objects",
+    dim=20,  # 20 possible object types
+    type=DataType.MULTILABEL,
+    timestamp_key="video.timestamps",
+    value_key="video.object_labels",
+    loss_fn=torch_brain.nn.loss.BCEWithLogitsLoss()
+)
+```
+</CodeGroup>
+
+### get_modality_by_id
+
+```python
+torch_brain.get_modality_by_id(modality_id: int) -> ModalitySpec
+```
+
+Retrieves a modality specification by its numeric ID.
+
+<ParamField path="modality_id" type="int">
+  Numeric ID of the modality to retrieve
+</ParamField>
+
+**Returns:** `ModalitySpec` object
+
+**Raises:** `KeyError` if no modality exists with the given ID
+
+<CodeGroup>
+```python Example
+import torch_brain
+
+# Get modality by ID
+modality_spec = torch_brain.get_modality_by_id(1)
+print(f"Modality: {modality_spec}")
+print(f"Dimension: {modality_spec.dim}")
+print(f"Type: {modality_spec.type}")
+```
+</CodeGroup>
+
+### MODALITY_REGISTRY
+
+```python
+torch_brain.MODALITY_REGISTRY: Dict[str, ModalitySpec]
+```
+
+Global dictionary mapping modality names to their specifications. You can directly access registered modalities:
+
+<CodeGroup>
+```python Example
+import torch_brain
+
+# Access by name
+cursor_vel_spec = torch_brain.MODALITY_REGISTRY['cursor_velocity_2d']
+print(cursor_vel_spec.dim)  # 2
+print(cursor_vel_spec.type)  # DataType.CONTINUOUS
+
+# List all registered modalities
+for name in torch_brain.MODALITY_REGISTRY:
+    print(name)
+```
+</CodeGroup>
+
+## Pre-registered Modalities
+
+torch_brain comes with several pre-registered modalities for common neuroscience tasks:
+
+### Behavior Modalities
+
+| Name | Dim | Type | Description |
+|------|-----|------|-------------|
+| `cursor_velocity_2d` | 2 | CONTINUOUS | 2D cursor velocity |
+| `cursor_position_2d` | 2 | CONTINUOUS | 2D cursor position |
+| `arm_velocity_2d` | 2 | CONTINUOUS | 2D hand velocity |
+| `running_speed` | 1 | CONTINUOUS | Running speed |
+| `gaze_pos_2d` | 2 | CONTINUOUS | 2D gaze position |
+| `pupil_location` | 2 | CONTINUOUS | 2D pupil center |
+| `pupil_size_2d` | 2 | CONTINUOUS | 2D pupil dimensions |
+
+### Visual Stimulus Modalities
+
+| Name | Dim | Type | Description |
+|------|-----|------|-------------|
+| `drifting_gratings_orientation` | 8 | MULTINOMIAL | Grating orientation (8 classes) |
+| `drifting_gratings_temporal_frequency` | 5 | MULTINOMIAL | Temporal frequency (5 classes) |
+| `static_gratings_orientation` | 6 | MULTINOMIAL | Static grating orientation |
+| `static_gratings_spatial_frequency` | 5 | MULTINOMIAL | Spatial frequency |
+| `static_gratings_phase` | 5 | MULTINOMIAL | Grating phase |
+| `natural_scenes` | 119 | MULTINOMIAL | Natural scene images |
+| `natural_movie_one_frame` | 900 | MULTINOMIAL | Movie 1 frame index |
+| `natural_movie_two_frame` | 900 | MULTINOMIAL | Movie 2 frame index |
+| `natural_movie_three_frame` | 3600 | MULTINOMIAL | Movie 3 frame index |
+| `locally_sparse_noise_frame` | 8000 | MULTINOMIAL | Sparse noise frame |
+| `gabor_orientation` | 4 | MULTINOMIAL | Gabor orientation (4 classes) |
+| `gabor_pos_2d` | 2 | CONTINUOUS | 2D Gabor position |
+
+## Usage Patterns
+
+### Defining Custom Modalities
+
+<CodeGroup>
+```python BMI Task
+import torch_brain
+from torch_brain.registry import DataType
+
+# Register target position and decoded position
+torch_brain.register_modality(
+    "bmi_target_2d",
+    dim=2,
+    type=DataType.CONTINUOUS,
+    timestamp_key="bmi.target_timestamps",
+    value_key="bmi.target_position",
+    loss_fn=torch_brain.nn.loss.MSELoss()
+)
+
+torch_brain.register_modality(
+    "bmi_decoded_2d",
+    dim=2,
+    type=DataType.CONTINUOUS,
+    timestamp_key="bmi.decoder_timestamps",
+    value_key="bmi.decoded_position",
+    loss_fn=torch_brain.nn.loss.MSELoss()
+)
+```
+
+```python Speech Decoding
+import torch_brain
+from torch_brain.registry import DataType
+
+# Register phoneme classification
+torch_brain.register_modality(
+    "phoneme_class",
+    dim=44,  # 44 phonemes in English
+    type=DataType.MULTINOMIAL,
+    timestamp_key="audio.timestamps",
+    value_key="audio.phoneme_label",
+    loss_fn=torch_brain.nn.loss.CrossEntropyLoss()
+)
+
+# Register audio spectrogram reconstruction
+torch_brain.register_modality(
+    "spectrogram_128",
+    dim=128,  # 128 frequency bins
+    type=DataType.CONTINUOUS,
+    timestamp_key="audio.timestamps",
+    value_key="audio.spectrogram",
+    loss_fn=torch_brain.nn.loss.MSELoss()
+)
+```
+</CodeGroup>
+
+### Using with Data Objects
+
+<CodeGroup>
+```python Integration with TemporalData
+from temporaldata import Data
+import torch_brain
+
+# Create data object with cursor tracking
+data = Data(
+    cursor={
+        'timestamps': cursor_times,
+        'vel': cursor_velocities,
+        'pos': cursor_positions
+    },
+    config={
+        'readout': {
+            'readout_id': 'cursor_velocity_2d'
+        }
+    }
+)
+
+# The registry automatically provides the right keys
+spec = torch_brain.MODALITY_REGISTRY['cursor_velocity_2d']
+values = data.get_nested_attribute(spec.value_key)  # cursor.vel
+times = data.get_nested_attribute(spec.timestamp_key)  # cursor.timestamps
+```
+</CodeGroup>
+
+### Using in Training Loops
+
+<CodeGroup>
+```python Multi-Task Training
+import torch_brain
+
+# Define multiple readout tasks
+readout_modalities = [
+    'cursor_velocity_2d',
+    'cursor_position_2d',
+    'running_speed'
+]
+
+# Access specifications
+for modality_name in readout_modalities:
+    spec = torch_brain.MODALITY_REGISTRY[modality_name]
+    print(f"Training on {modality_name}: dim={spec.dim}, type={spec.type}")
+    
+    # Use appropriate loss function
+    loss_fn = spec.loss_fn
+    predictions = model.decode(latents, modality_id=spec.id)
+    loss = loss_fn(predictions, targets)
+```
+</CodeGroup>
+
+## Best Practices
+
+<Tip>
+**Register modalities at module initialization** - Define all custom modalities in your package's `__init__.py` so they're available throughout your codebase.
+</Tip>
+
+<Warning>
+**Avoid name collisions** - Use descriptive, unique names for custom modalities. Consider prefixing with your dataset or experiment name (e.g., `"my_dataset_cursor_vel"`).
+</Warning>
+
+<Note>
+**Modality IDs are assigned sequentially** - The first registered modality gets ID 1, the second gets ID 2, etc. Pre-registered modalities occupy IDs 1-18.
+</Note>

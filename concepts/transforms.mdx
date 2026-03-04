@@ -1,0 +1,459 @@
+---
+title: Transforms
+description: Data augmentation and preprocessing for neural data including UnitDropout, RandomTimeScaling, RandomCrop, and composition strategies
+---
+
+## Overview
+
+Transforms in torch_brain provide powerful data augmentation and preprocessing capabilities for neural recordings. They operate on `temporaldata.Data` objects and can be composed together for complex pipelines.
+
+<Info>
+  All transforms accept a `Data` object and return a transformed `Data` object, making them composable and compatible with the Dataset's transform parameter.
+</Info>
+
+## Core Transforms
+
+### UnitDropout
+
+Randomly drops neural units from recordings to improve model generalization and robustness.
+
+```python
+from torch_brain.transforms import UnitDropout
+
+# Default: samples from triangular distribution
+transform = UnitDropout(
+    field="spikes",      # Field to apply dropout (default: "spikes")
+    reset_index=True,    # Re-index units after dropout (default: True)
+    min_units=20,        # Minimum units to keep
+    mode_units=100,      # Mode of distribution
+    max_units=300,       # Maximum units to sample
+    peak=4,              # Height of distribution peak
+    seed=None            # Random seed for reproducibility
+)
+
+data = transform(data)  # Randomly keeps subset of units
+```
+
+**How it works:**
+
+1. Samples the number of units to keep from a `TriangleDistribution`
+2. Randomly selects which units to keep
+3. Filters data based on selected units
+4. Optionally re-indexes unit IDs to be contiguous
+
+**Supported data types:**
+
+- **IrregularTimeSeries** (e.g., spike trains): Removes spikes from dropped units
+- **RegularTimeSeries** (e.g., binned activity): Removes corresponding columns
+
+```python
+# Example with spike data
+data.spikes  # IrregularTimeSeries with 200 units
+data = UnitDropout(min_units=50, mode_units=100)(data)
+data.spikes  # Now has ~100 units (sampled from distribution)
+```
+
+<Note>
+  If the recording has fewer than `min_units`, all units are kept. The distribution gracefully handles edge cases.
+</Note>
+
+#### TriangleDistribution
+
+The `TriangleDistribution` controls how many units to keep:
+
+```python
+from torch_brain.transforms.unit_dropout import TriangleDistribution
+
+dist = TriangleDistribution(
+    min_units=20,        # Minimum units
+    mode_units=100,      # Peak of distribution
+    max_units=300,       # Maximum units
+    tail_right=None,     # Right tail (default: max_units)
+    peak=4,              # Peak height
+    M=10,                # Normalization constant
+    max_attempts=100     # Max rejection sampling attempts
+)
+
+num_units_to_keep = dist.sample(num_units=200)
+```
+
+The unnormalized density function:
+
+- Linearly increases from 1 to `peak` between `min_units` and `mode_units`
+- Linearly decreases from `peak` to 1 between `mode_units` and `tail_right`
+- Stays at 1 between `tail_right` and `max_units`
+
+<Info>
+  Uses rejection sampling to draw samples from the triangular distribution. Adjust `M` if you get warnings about max attempts.
+</Info>
+
+### RandomTimeScaling
+
+Randomly scales and shifts the time axis of recordings.
+
+```python
+from torch_brain.transforms import RandomTimeScaling
+
+transform = RandomTimeScaling(
+    min_scale=0.9,      # Minimum scaling factor
+    max_scale=1.1,      # Maximum scaling factor  
+    min_offset=0,       # Minimum time offset
+    max_offset=0        # Maximum time offset
+)
+
+data = transform(data)
+```
+
+**How it works:**
+
+1. Samples random `scale` from `[min_scale, max_scale]`
+2. Samples random `offset` from `[min_offset, max_offset]`
+3. Transforms all temporal components: `new_time = old_time * scale + offset`
+
+**What gets transformed:**
+
+- **IrregularTimeSeries**: Timestamps are scaled and offset
+- **RegularTimeSeries**: Sampling rate is adjusted (`new_rate = old_rate / scale`)
+- **Interval**: Start and end times are scaled and offset
+- **Domain**: Recording domain is updated
+
+```python
+# Example: Speed up by 10%
+transform = RandomTimeScaling(min_scale=1.0, max_scale=1.1)
+
+# Original: 1000ms recording
+data.domain  # Interval(start=0, end=1000)
+data = transform(data)
+data.domain  # Interval(start=0, end=~1100)  # Stretched in time
+```
+
+<Warning>
+  Time scaling affects all temporal aspects uniformly. Neural firing rates will appear to change with scaling.
+</Warning>
+
+### RandomCrop
+
+Randomly crops a shorter window from the data.
+
+```python
+from torch_brain.transforms import RandomCrop
+
+transform = RandomCrop(crop_len=0.5)  # Crop to 0.5 seconds
+
+# Original: 1 second window
+data.domain  # Interval(start=0, end=1.0)
+data = transform(data)
+data.domain  # Interval(start=~0.3, end=~0.8)  # Random 0.5s crop
+```
+
+**Behavior:**
+
+- If `sequence_length <= crop_len`: Returns data unchanged
+- Otherwise: Randomly selects a start time and crops to `crop_len`
+- Uses `data.slice()` internally, maintaining temporal consistency
+
+**Use case:** Generate variable-length training samples from fixed sampler windows.
+
+### UnitFilter
+
+Filter units based on custom criteria.
+
+```python
+from torch_brain.transforms import UnitFilter
+import numpy as np
+
+# Keep units matching a condition
+def high_firing_rate(units):
+    """Keep units with mean_firing_rate > 5 Hz"""
+    return units.mean_firing_rate > 5.0
+
+transform = UnitFilter(
+    mask_fn=high_firing_rate,
+    field="spikes",
+    reset_index=True
+)
+
+data = transform(data)
+```
+
+**The mask function:**
+
+- Takes `ArrayDict` (the units object) as input  
+- Returns boolean numpy array (True = keep unit)
+- Has access to all unit attributes (e.g., `units.brain_area`, `units.id`)
+
+#### UnitFilterById
+
+Specialized filter based on unit ID patterns:
+
+```python
+from torch_brain.transforms import UnitFilterById
+
+# Keep units matching regex pattern
+transform = UnitFilterById(
+    pattern=r"^M1_",      # Keep M1 units
+    field="spikes",
+    reset_index=True,
+    keep_matches=True     # True=keep matches, False=drop matches
+)
+
+# Drop units matching pattern
+transform = UnitFilterById(
+    pattern=r"noise",
+    field="spikes",
+    keep_matches=False    # Drop units with "noise" in ID
+)
+```
+
+<Note>
+  UnitFilter currently only supports IrregularTimeSeries. RegularTimeSeries support is planned.
+</Note>
+
+## Transform Composition
+
+### Compose
+
+Apply transforms sequentially:
+
+```python
+from torch_brain.transforms import Compose, UnitDropout, RandomTimeScaling, RandomCrop
+
+transform = Compose([
+    UnitDropout(min_units=50, mode_units=100),
+    RandomTimeScaling(min_scale=0.95, max_scale=1.05),
+    RandomCrop(crop_len=0.8)
+])
+
+data = transform(data)
+# 1. Drops units
+# 2. Scales time
+# 3. Crops to 0.8s
+```
+
+**Properties:**
+
+- All transforms except the last must accept and return `Data` objects
+- The last transform can return any type (useful for final conversions)
+- Transforms are applied in order
+
+### RandomChoice
+
+Randomly select one transform from a list:
+
+```python
+from torch_brain.transforms import RandomChoice, UnitDropout
+
+# Different dropout strategies
+transform = RandomChoice(
+    transforms=[
+        UnitDropout(min_units=20, mode_units=50),   # Aggressive dropout
+        UnitDropout(min_units=100, mode_units=150), # Conservative dropout
+        lambda x: x,                                 # No dropout
+    ],
+    p=[0.3, 0.3, 0.4]  # Probabilities (auto-normalized)
+)
+
+data = transform(data)  # Applies one randomly
+```
+
+**Probability specification:**
+
+- If `p=None`: All transforms equally likely
+- If `p` provided: Must match number of transforms
+- Automatically normalized to sum to 1
+
+### ConditionalChoice
+
+Apply different transforms based on a condition:
+
+```python
+from torch_brain.transforms import ConditionalChoice
+
+# Different augmentation based on number of units
+transform = ConditionalChoice(
+    condition=lambda data: len(data.units.id) > 100,
+    true_transform=UnitDropout(min_units=50, mode_units=100),  # Many units
+    false_transform=lambda x: x,                                # Few units: no dropout
+)
+
+data = transform(data)
+```
+
+**Condition function:**
+
+- Takes `Data` object as input
+- Must return boolean
+- Can access any data attributes
+
+```python
+# Example: Conditional on brain area
+def is_motor_cortex(data):
+    return 'M1' in data.units.brain_area[0] if hasattr(data.units, 'brain_area') else False
+
+transform = ConditionalChoice(
+    condition=is_motor_cortex,
+    true_transform=motor_specific_augmentation,
+    false_transform=general_augmentation
+)
+```
+
+## Advanced Examples
+
+### Multi-stage Augmentation Pipeline
+
+```python
+from torch_brain.transforms import (
+    Compose, RandomChoice, UnitDropout, 
+    RandomTimeScaling, RandomCrop, UnitFilterById
+)
+
+# Training augmentation pipeline
+train_transform = Compose([
+    # Stage 1: Filter low-quality units
+    UnitFilterById(pattern=r"noise|artifact", keep_matches=False),
+    
+    # Stage 2: Random augmentation strategy
+    RandomChoice(
+        transforms=[
+            # Strategy A: Aggressive augmentation
+            Compose([
+                UnitDropout(min_units=30, mode_units=80, max_units=200),
+                RandomTimeScaling(min_scale=0.9, max_scale=1.1),
+            ]),
+            # Strategy B: Conservative augmentation
+            Compose([
+                UnitDropout(min_units=80, mode_units=120, max_units=200),
+                RandomTimeScaling(min_scale=0.98, max_scale=1.02),
+            ]),
+            # Strategy C: No augmentation
+            lambda x: x,
+        ],
+        p=[0.4, 0.4, 0.2]
+    ),
+    
+    # Stage 3: Random crop
+    RandomCrop(crop_len=0.9),
+])
+
+# Apply to dataset
+from torch_brain.data import Dataset
+
+dataset = Dataset(
+    root="/path/to/data",
+    recording_id="brainset/session",
+    split="train",
+    transform=train_transform
+)
+```
+
+### Validation Transform (Minimal Augmentation)
+
+```python
+# No randomness for deterministic evaluation
+val_transform = Compose([
+    UnitFilterById(pattern=r"noise|artifact", keep_matches=False),
+    # No dropout, no time scaling, no cropping
+])
+
+val_dataset = Dataset(
+    root="/path/to/data",
+    recording_id="brainset/session",
+    split="valid",
+    transform=val_transform
+)
+```
+
+### Brain Area-Specific Augmentation
+
+```python
+def get_brain_area_transform(target_area):
+    """Create transform that only keeps units from target area"""
+    def area_filter(units):
+        if not hasattr(units, 'brain_area'):
+            return np.ones(len(units.id), dtype=bool)
+        return np.array([area == target_area for area in units.brain_area])
+    
+    return Compose([
+        UnitFilter(mask_fn=area_filter, field="spikes"),
+        UnitDropout(min_units=20, mode_units=50),
+    ])
+
+# Create area-specific datasets
+m1_transform = get_brain_area_transform("M1")
+s1_transform = get_brain_area_transform("S1")
+```
+
+## Using Transforms with DataLoader
+
+```python
+from torch.utils.data import DataLoader
+from torch_brain.data import Dataset
+from torch_brain.data.sampler import RandomFixedWindowSampler
+
+# Dataset with transforms
+dataset = Dataset(
+    root="/path/to/data",
+    recording_id="brainset/session",
+    split="train",
+    transform=train_transform  # Applied when __getitem__ is called
+)
+
+sampler = RandomFixedWindowSampler(
+    sampling_intervals=dataset.get_sampling_intervals(),
+    window_length=1.0
+)
+
+dataloader = DataLoader(
+    dataset,
+    batch_size=32,
+    sampler=sampler,
+    num_workers=4  # Transforms run in worker processes
+)
+
+for batch in dataloader:
+    # Each sample has been transformed
+    # Different augmentation each epoch due to randomness
+    pass
+```
+
+## Best Practices
+
+<Info>
+  **Training**: Use aggressive augmentation (UnitDropout, RandomTimeScaling) to improve generalization
+</Info>
+
+<Info>
+  **Validation/Test**: Use minimal or no augmentation for consistent evaluation
+</Info>
+
+<Warning>
+  Be careful with time scaling - it affects apparent neural dynamics. Use conservative ranges (0.95-1.05) unless you have domain-specific reasons.
+</Warning>
+
+**Recommended augmentation strengths:**
+
+```python
+# Conservative (stable training)
+conservative = Compose([
+    UnitDropout(min_units=80, mode_units=100, max_units=150),
+    RandomTimeScaling(min_scale=0.98, max_scale=1.02),
+])
+
+# Moderate (good generalization)
+moderate = Compose([
+    UnitDropout(min_units=50, mode_units=100, max_units=200),
+    RandomTimeScaling(min_scale=0.95, max_scale=1.05),
+])
+
+# Aggressive (maximum robustness)
+aggressive = Compose([
+    UnitDropout(min_units=20, mode_units=80, max_units=250),
+    RandomTimeScaling(min_scale=0.9, max_scale=1.1),
+])
+```
+
+## Next Steps
+
+- Learn about [Data Loading](/concepts/data-loading) to apply transforms to datasets
+- Understand [Samplers](/concepts/samplers) for temporal slicing strategies  
+- Work with [Modalities](/concepts/modalities) for multi-modal data handling

@@ -1,0 +1,702 @@
+---
+title: Custom Datasets
+description: How to integrate your own neural data with torch_brain
+---
+
+## Overview
+
+This guide shows you how to prepare and load your own neural recordings for training with torch_brain. You'll learn how to structure your data, define readout configurations, and create custom dataset classes.
+
+## Data Format Requirements
+
+### TemporalData Structure
+
+torch_brain uses the `temporaldata` library to represent neural recordings. Your data should be organized as `temporaldata.Data` objects stored in HDF5 format.
+
+<Steps>
+  <Step title="Organize your data">
+    Structure your recordings following the brainsets format:
+    ```
+    data/processed/
+    ├── my_brainset/
+    │   ├── session_001.h5
+    │   ├── session_002.h5
+    │   └── ...
+    ```
+  </Step>
+
+  <Step title="Create Data objects">
+    Each HDF5 file should contain a `temporaldata.Data` object with:
+    - **Spike data**: Neural unit spike times
+    - **Behavior data**: Task variables (positions, velocities, labels, etc.)
+    - **Metadata**: Session info, subject info, splits
+  </Step>
+
+  <Step title="Define splits">
+    Include train/validation/test splits in your data:
+    - `train_domain`: Training time intervals
+    - `valid_domain`: Validation time intervals  
+    - `test_domain`: Test time intervals
+  </Step>
+</Steps>
+
+### Required Data Attributes
+
+Each `Data` object should include:
+
+```python
+from temporaldata import Data, Interval
+import numpy as np
+
+# Create a Data object
+data = Data(
+    # Spike data
+    spikes=IrregularTimeSeries(
+        timestamps=spike_times,  # List of arrays, one per unit
+        domain=Interval(0, recording_duration),
+    ),
+    
+    # Unit metadata
+    units=TabularData(
+        id=unit_ids,  # Unique identifier for each unit
+        # Optional: brain_area, quality_metrics, etc.
+    ),
+    
+    # Behavior/task data
+    cursor=RegularTimeSeries(
+        timestamps=cursor_times,
+        data={
+            'pos': cursor_positions,  # Shape: (n_timepoints, 2)
+            'vel': cursor_velocities,  # Shape: (n_timepoints, 2)
+        },
+        domain=Interval(0, recording_duration),
+    ),
+    
+    # Session metadata
+    session=Metadata(
+        id="session_001",
+    ),
+    
+    # Subject metadata
+    subject=Metadata(
+        id="subject_A",
+    ),
+    
+    # Brainset metadata
+    brainset=Metadata(
+        id="my_brainset",
+    ),
+    
+    # Data splits
+    train_domain=Interval.from_list(train_intervals),
+    valid_domain=Interval.from_list(valid_intervals),
+    test_domain=Interval.from_list(test_intervals),
+)
+
+# Save to HDF5
+with h5py.File('session_001.h5', 'w') as f:
+    data.to_hdf5(f)
+```
+
+## Dataset Configuration
+
+### Creating a Custom Dataset Class
+
+Extend the base dataset class to define your readout configuration:
+
+```python
+import torchmetrics
+from torch_brain.data import Dataset
+from copy import deepcopy
+
+class MyDataset(Dataset):
+    """Custom dataset for my neural recordings."""
+    
+    # Define readout configuration
+    READOUT_CONFIG = {
+        "readout": {
+            "readout_id": "cursor_velocity_2d",
+            "normalize_mean": 0.0,
+            "normalize_std": 20.0,
+            "weights": {
+                "task_phases.baseline": 0.1,
+                "task_phases.movement": 5.0,
+                "task_phases.hold": 1.0,
+            },
+            "metrics": [
+                {"metric": torchmetrics.R2Score()}
+            ],
+            "eval_interval": "task_phases.movement",
+        }
+    }
+    
+    def __init__(self, root, recording_ids, transform=None):
+        # Configuration for dataset selection
+        config = [
+            {
+                "selection": [
+                    {
+                        "brainset": "my_brainset",
+                        "sessions": recording_ids,
+                    }
+                ],
+                "config": deepcopy(self.READOUT_CONFIG),
+            }
+        ]
+        
+        super().__init__(
+            root=root,
+            config=config,
+            transform=transform,
+        )
+```
+
+This pattern is based on `examples/poyo/datasets/poyo_mp.py:1-55`.
+
+### Readout Configuration Explained
+
+<ParamField path="readout_id" type="string" required>
+  The modality identifier registered in `MODALITY_REGISTRY`. Examples:
+  - `cursor_velocity_2d`
+  - `cursor_position_2d`
+  - `arm_velocity_2d`
+  
+  See `torch_brain/registry.py` for all available modalities.
+</ParamField>
+
+<ParamField path="normalize_mean" type="float">
+  Mean for normalizing target values. Set to 0.0 if data is already centered.
+</ParamField>
+
+<ParamField path="normalize_std" type="float">
+  Standard deviation for normalization. Helps stabilize training.
+</ParamField>
+
+<ParamField path="weights" type="dict">
+  Dictionary mapping time intervals to loss weights. Higher weights emphasize specific task phases:
+  ```python
+  "weights": {
+      "movement_phases.reach_period": 5.0,  # High weight
+      "movement_phases.hold_period": 0.1,   # Low weight
+      "cursor_outlier_segments": 0.0,       # Ignored
+  }
+  ```
+</ParamField>
+
+<ParamField path="metrics" type="list">
+  List of torchmetrics to compute during evaluation:
+  ```python
+  "metrics": [
+      {"metric": torchmetrics.R2Score()},
+      {"metric": torchmetrics.MeanSquaredError()},
+      {"metric": torchmetrics.PearsonCorrCoef()},
+  ]
+  ```
+</ParamField>
+
+<ParamField path="eval_interval" type="string">
+  Time interval attribute name for computing evaluation metrics. Only predictions within this interval contribute to metrics.
+</ParamField>
+
+## Registering Custom Modalities
+
+### Creating a New Modality
+
+If your behavioral variable isn't in the registry, register it:
+
+```python
+from torch_brain.registry import register_modality, DataType
+import torch_brain
+
+# Register a new continuous variable
+register_modality(
+    "hand_position_3d",
+    dim=3,  # x, y, z coordinates
+    type=DataType.CONTINUOUS,
+    timestamp_key="behavior.timestamps",
+    value_key="behavior.hand_pos",
+    loss_fn=torch_brain.nn.loss.MSELoss(),
+)
+
+# Register a classification variable
+register_modality(
+    "reach_direction",
+    dim=8,  # 8 possible directions
+    type=DataType.MULTINOMIAL,
+    timestamp_key="behavior.timestamps",
+    value_key="behavior.reach_direction_id",
+    loss_fn=torch_brain.nn.loss.CrossEntropyLoss(),
+)
+
+# Register a binary variable
+register_modality(
+    "reward_received",
+    dim=1,
+    type=DataType.BINARY,
+    timestamp_key="task.timestamps",
+    value_key="task.reward",
+    loss_fn=torch_brain.nn.loss.BCEWithLogitsLoss(),
+)
+```
+
+See `torch_brain/registry.py:97-267` for examples of all registered modalities.
+
+### DataType Options
+
+<ResponseField name="CONTINUOUS" type="DataType">
+  For continuous-valued variables (positions, velocities, speeds). Uses MSE loss.
+</ResponseField>
+
+<ResponseField name="MULTINOMIAL" type="DataType">
+  For multi-class categorical variables (directions, object IDs). Uses cross-entropy loss.
+</ResponseField>
+
+<ResponseField name="BINARY" type="DataType">
+  For binary variables (reward/no-reward, left/right). Uses binary cross-entropy loss.
+</ResponseField>
+
+<ResponseField name="MULTILABEL" type="DataType">
+  For multi-label classification (multiple simultaneous labels).
+</ResponseField>
+
+## Data Selection
+
+### Selecting Specific Sessions
+
+The `config` parameter controls which recordings to include:
+
+```python
+# Select specific sessions
+config = [
+    {
+        "selection": [
+            {
+                "brainset": "my_brainset",
+                "sessions": ["session_001", "session_002", "session_003"],
+            }
+        ],
+        "config": readout_config,
+    }
+]
+
+# Select by subject
+config = [
+    {
+        "selection": [
+            {
+                "brainset": "my_brainset",
+                "subject": "subject_A",  # All sessions from subject A
+            }
+        ],
+        "config": readout_config,
+    }
+]
+
+# Select multiple subjects
+config = [
+    {
+        "selection": [
+            {
+                "brainset": "my_brainset",
+                "subjects": ["subject_A", "subject_B"],
+            }
+        ],
+        "config": readout_config,
+    }
+]
+
+# Exclude specific sessions
+config = [
+    {
+        "selection": [
+            {
+                "brainset": "my_brainset",
+                "exclude_sessions": ["session_bad_001"],
+            }
+        ],
+        "config": readout_config,
+    }
+]
+```
+
+From `torch_brain/data/dataset.py:169-283`.
+
+### Multiple Brainsets
+
+Combine data from different sources:
+
+```python
+config = [
+    # First brainset
+    {
+        "selection": [
+            {"brainset": "brainset_A", "subject": "monkey_1"},
+        ],
+        "config": cursor_reaching_config,
+    },
+    # Second brainset with different task
+    {
+        "selection": [
+            {"brainset": "brainset_B", "sessions": ["sess_01", "sess_02"]},
+        ],
+        "config": grasp_config,
+    },
+]
+
+dataset = Dataset(root="./data/processed", config=config)
+```
+
+## Multi-Task Datasets (POYO+)
+
+### Defining Multiple Readouts
+
+For POYO+, define multiple readout tasks per session:
+
+```python
+MULTITASK_CONFIG = {
+    "multitask_readout": [
+        # Task 1: Cursor velocity
+        {
+            "readout_id": "cursor_velocity_2d",
+            "normalize_mean": 0.0,
+            "normalize_std": 20.0,
+            "weights": {"movement_phases.reach_period": 5.0},
+            "metrics": [{"metric": torchmetrics.R2Score()}],
+        },
+        # Task 2: Cursor position
+        {
+            "readout_id": "cursor_position_2d",
+            "normalize_mean": [0.0, 0.0],
+            "normalize_std": [100.0, 100.0],
+            "weights": {"movement_phases.reach_period": 1.0},
+            "metrics": [{"metric": torchmetrics.MeanSquaredError()}],
+        },
+    ]
+}
+```
+
+### Session-Specific Configurations
+
+Different sessions can have different tasks:
+
+```python
+class MyMultiTaskDataset(Dataset):
+    REACHING_CONFIG = {
+        "multitask_readout": [
+            # Reaching-specific readouts
+        ]
+    }
+    
+    GRASPING_CONFIG = {
+        "multitask_readout": [
+            # Grasping-specific readouts
+        ]
+    }
+    
+    def get_recording_hook(self, data):
+        """Assign config based on task type."""
+        if "reaching" in data.session.id:
+            data.config = deepcopy(self.REACHING_CONFIG)
+        elif "grasping" in data.session.id:
+            data.config = deepcopy(self.GRASPING_CONFIG)
+        super().get_recording_hook(data)
+```
+
+Based on `examples/poyo/datasets/poyo_mp.py:49-54`.
+
+## Data Transforms
+
+### Available Transforms
+
+torch_brain provides several transforms for data augmentation:
+
+```python
+from torch_brain.transforms import (
+    UnitDropout,
+    RandomCrop,
+    RandomTimeScaling,
+    Compose,
+)
+
+# Compose multiple transforms
+transforms = Compose([
+    UnitDropout(
+        max_units=1000,
+        min_units=60,
+        mode_units=300,
+        peak=4,
+    ),
+    RandomTimeScaling(
+        min_scale=0.9,
+        max_scale=1.1,
+    ),
+    RandomCrop(
+        crop_length=0.8,  # seconds
+    ),
+])
+
+dataset = MyDataset(
+    root="./data/processed",
+    recording_ids=train_ids,
+    transform=transforms,
+)
+```
+
+From `torch_brain/transforms/__init__.py`.
+
+### UnitDropout
+
+Randomly drops neural units during training to improve generalization:
+
+<ParamField path="max_units" type="int">
+  Maximum number of units to keep
+</ParamField>
+
+<ParamField path="min_units" type="int">
+  Minimum number of units to keep
+</ParamField>
+
+<ParamField path="mode_units" type="int">
+  Most common number of units (peak of distribution)
+</ParamField>
+
+<ParamField path="peak" type="float">
+  Sharpness of the distribution
+</ParamField>
+
+<Tip>
+  UnitDropout helps models generalize across sessions with different unit counts.
+</Tip>
+
+## Dataset Usage Example
+
+### Complete Integration
+
+Here's a complete example integrating a custom dataset:
+
+```python
+import torchmetrics
+from torch_brain.data import Dataset
+from torch_brain.registry import register_modality, DataType
+import torch_brain
+
+# 1. Register custom modality (if needed)
+register_modality(
+    "hand_velocity_3d",
+    dim=3,
+    type=DataType.CONTINUOUS,
+    timestamp_key="hand.timestamps",
+    value_key="hand.velocity",
+    loss_fn=torch_brain.nn.loss.MSELoss(),
+)
+
+# 2. Define dataset class
+class ReachingDataset(Dataset):
+    READOUT_CONFIG = {
+        "readout": {
+            "readout_id": "hand_velocity_3d",
+            "normalize_mean": 0.0,
+            "normalize_std": 15.0,
+            "weights": {
+                "task.reaching": 5.0,
+                "task.holding": 0.5,
+            },
+            "metrics": [
+                {"metric": torchmetrics.R2Score()},
+            ],
+            "eval_interval": "task.reaching",
+        }
+    }
+    
+    def __init__(self, root, recording_ids, transform=None):
+        config = [
+            {
+                "selection": [
+                    {
+                        "brainset": "reaching_study",
+                        "sessions": recording_ids,
+                    }
+                ],
+                "config": self.READOUT_CONFIG,
+            }
+        ]
+        super().__init__(root=root, config=config, transform=transform)
+
+# 3. Use in training config
+# In your YAML config file:
+# dataset:
+#   _target_: datasets.reaching.ReachingDataset
+#   recording_ids:
+#     - session_001
+#     - session_002
+#     - session_003
+
+# Or programmatically:
+from torch_brain.transforms import UnitDropout, Compose
+
+train_dataset = ReachingDataset(
+    root="./data/processed",
+    recording_ids=["session_001", "session_002"],
+    transform=Compose([
+        UnitDropout(max_units=500, min_units=50, mode_units=200, peak=4)
+    ]),
+)
+```
+
+## Sampling Intervals
+
+### Custom Sampling Modifiers
+
+Modify sampling intervals programmatically:
+
+```python
+config = [
+    {
+        "selection": [{"brainset": "my_brainset"}],
+        "config": readout_config,
+        "sampling_intervals_modifier": """
+# Python code with access to: data, sampling_intervals, split
+
+# Example: Remove first 5 minutes of each interval
+from temporaldata import Interval
+
+new_intervals = []
+for interval in sampling_intervals:
+    start = interval.start + 300  # Skip 5 min (300 sec)
+    if start < interval.end:
+        new_intervals.append(Interval(start, interval.end))
+
+sampling_intervals = Interval.from_list(new_intervals)
+        """
+    }
+]
+```
+
+From `torch_brain/data/dataset.py:376-401`.
+
+<Warning>
+  The sampling intervals modifier executes arbitrary Python code. Only use trusted configurations.
+</Warning>
+
+## Validation
+
+### Verify Your Dataset
+
+Before training, validate your dataset setup:
+
+```python
+from torch_brain.data import Dataset
+
+# Load dataset
+dataset = MyDataset(
+    root="./data/processed",
+    recording_ids=all_recording_ids,
+)
+
+# Check basic info
+print(f"Number of sessions: {len(dataset.get_session_ids())}")
+print(f"Number of units: {len(dataset.get_unit_ids())}")
+print(f"Number of subjects: {len(dataset.get_subject_ids())}")
+
+# Inspect a recording
+recording_id = dataset.recording_dict.keys()[0]
+data = dataset.get_recording_data(recording_id)
+
+print(f"\nRecording: {recording_id}")
+print(f"Duration: {data.domain.duration:.2f} seconds")
+print(f"Number of units: {len(data.units.id)}")
+print(f"Config: {data.config}")
+
+# Check splits
+sampling_intervals = dataset.get_sampling_intervals()
+for rec_id, intervals in sampling_intervals.items():
+    print(f"{rec_id}: {intervals.duration:.2f}s of data")
+```
+
+Based on `torch_brain/data/dataset.py:404-470`.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="File not found errors">
+    **Check**:
+    - Files are in `{root}/{brainset}/{session}.h5` format
+    - File permissions allow reading
+    - Brainset name matches directory name exactly
+    - Session IDs match filenames (without `.h5` extension)
+  </Accordion>
+
+  <Accordion title="Missing attributes in Data object">
+    **Required attributes**:
+    - `spikes` (IrregularTimeSeries)
+    - `units.id` (TabularData)
+    - `session.id` (Metadata)
+    - `subject.id` (Metadata)
+    - `brainset.id` (Metadata)
+    - Behavior data matching your `timestamp_key` and `value_key`
+    - Split domains if using splits (`train_domain`, `valid_domain`, `test_domain`)
+  </Accordion>
+
+  <Accordion title="Readout ID not found">
+    **Solutions**:
+    - Check `MODALITY_REGISTRY` for available IDs:
+      ```python
+      from torch_brain.registry import MODALITY_REGISTRY
+      print(list(MODALITY_REGISTRY.keys()))
+      ```
+    - Register your custom modality before creating the dataset
+    - Verify spelling matches exactly
+  </Accordion>
+
+  <Accordion title="Data leakage warnings">
+    **Causes**:
+    - Sampling intervals overlap between train/valid/test splits
+    - Missing split definitions in Data object
+    
+    **Solutions**:
+    - Ensure splits are disjoint in time
+    - Define `train_domain`, `valid_domain`, `test_domain`
+    - Only disable check if you're certain: `dataset.disable_data_leakage_check()`
+  </Accordion>
+
+  <Accordion title="Normalization issues">
+    **Tips**:
+    - Compute normalization stats from training data only:
+      ```python
+      # Calculate mean and std from training data
+      import numpy as np
+      
+      all_values = []
+      for recording_id in train_recording_ids:
+          data = dataset.get_recording_data(recording_id)
+          values = data.cursor.vel  # Your target variable
+          all_values.append(values)
+      
+      all_values = np.concatenate(all_values)
+      mean = np.mean(all_values, axis=0)
+      std = np.std(all_values, axis=0)
+      
+      print(f"normalize_mean: {mean.tolist()}")
+      print(f"normalize_std: {std.tolist()}")
+      ```
+    - Use same normalization for all sessions in a dataset
+    - For multi-dimensional outputs, can provide lists: `[mean_x, mean_y]`
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Training Models" icon="rocket" href="/guides/training">
+    Train POYO models on your custom dataset
+  </Card>
+  <Card title="Evaluation" icon="chart-line" href="/guides/evaluation">
+    Evaluate model performance and compute metrics
+  </Card>
+  <Card title="Dataset API" icon="book" href="/api/dataset">
+    Complete Dataset API documentation
+  </Card>
+  <Card title="Registry" icon="list" href="/api/registry">
+    View all registered modalities
+  </Card>
+</CardGroup>

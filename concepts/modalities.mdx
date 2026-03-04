@@ -1,0 +1,479 @@
+---
+title: Modalities
+description: Multi-modal neural data handling with the modality registry system for behavior, stimuli, and neural recordings
+---
+
+## Overview
+
+The modality system in torch_brain provides a structured way to work with diverse data types in neural recordings - from continuous behavioral variables to discrete stimulus categories. The registry system ensures consistent handling of different data modalities across models and loss functions.
+
+<Info>
+  Modalities define **what** you want to decode from neural activity: cursor velocity, visual stimuli, running speed, etc. Each modality has a type, dimension, and associated loss function.
+</Info>
+
+## Core Concepts
+
+### ModalitySpec
+
+Each modality is defined by a `ModalitySpec` dataclass:
+
+```python
+from torch_brain.registry import ModalitySpec, DataType
+
+@dataclass
+class ModalitySpec:
+    id: int                # Unique numeric ID
+    dim: int              # Output dimension
+    type: DataType        # CONTINUOUS, BINARY, MULTINOMIAL, or MULTILABEL
+    timestamp_key: str    # Path to timestamps in Data object
+    value_key: str        # Path to values in Data object  
+    loss_fn: Callable     # Loss function for this modality
+```
+
+### DataType Enum
+
+Four data types are supported:
+
+```python
+from torch_brain.registry import DataType
+
+class DataType(Enum):
+    CONTINUOUS = 0   # Real-valued outputs (regression)
+    BINARY = 1       # Binary classification
+    MULTINOMIAL = 2  # Multi-class classification
+    MULTILABEL = 3   # Multi-label classification
+```
+
+**Usage guidelines:**
+
+- **CONTINUOUS**: Velocities, positions, speeds (2D cursor velocity, pupil size)
+- **BINARY**: Binary states (e.g., engaged/disengaged)
+- **MULTINOMIAL**: One-of-many choices (stimulus orientation, movie frame)
+- **MULTILABEL**: Multiple simultaneous labels (multiple stimuli present)
+
+## Modality Registry
+
+The global registry stores all available modalities:
+
+```python
+from torch_brain.registry import MODALITY_REGISTRY, register_modality
+
+# Register a new modality
+modality_id = register_modality(
+    "cursor_velocity_2d",
+    dim=2,
+    type=DataType.CONTINUOUS,
+    timestamp_key="cursor.timestamps",
+    value_key="cursor.vel",
+    loss_fn=torch_brain.nn.loss.MSELoss()
+)
+
+# Access registered modality
+spec = MODALITY_REGISTRY["cursor_velocity_2d"]
+print(f"Modality ID: {spec.id}, Dim: {spec.dim}")
+```
+
+### Registration Rules
+
+<Warning>
+  Each modality name must be unique. Attempting to register a duplicate will raise a `ValueError`.
+</Warning>
+
+```python
+# This will fail if already registered
+try:
+    register_modality(
+        "cursor_velocity_2d",  # Already exists
+        dim=2,
+        type=DataType.CONTINUOUS,
+        timestamp_key="cursor.timestamps",
+        value_key="cursor.vel",
+        loss_fn=MSELoss()
+    )
+except ValueError as e:
+    print(f"Error: {e}")  # Modality cursor_velocity_2d already exists
+```
+
+**ID Assignment:**
+
+- IDs are auto-assigned sequentially starting from 1
+- IDs are permanent once assigned
+- Use `get_modality_by_id()` to retrieve by ID
+
+```python
+from torch_brain.registry import get_modality_by_id, _ID_TO_MODALITY
+
+modality_name = get_modality_by_id(1)  # Returns modality name
+spec = MODALITY_REGISTRY[modality_name]
+```
+
+## Built-in Modalities
+
+torch_brain includes many pre-registered modalities:
+
+### Motor/Behavior Modalities
+
+```python
+# 2D cursor velocity (center-out reaching tasks)
+MODALITY_REGISTRY["cursor_velocity_2d"]
+# dim=2, type=CONTINUOUS
+# timestamp_key="cursor.timestamps", value_key="cursor.vel"
+
+# 2D cursor position
+MODALITY_REGISTRY["cursor_position_2d"]
+# dim=2, type=CONTINUOUS
+# timestamp_key="cursor.timestamps", value_key="cursor.pos"
+
+# 2D arm velocity
+MODALITY_REGISTRY["arm_velocity_2d"]
+# dim=2, type=CONTINUOUS
+# timestamp_key="behavior.timestamps", value_key="behavior.hand_vel"
+
+# Running speed (1D)
+MODALITY_REGISTRY["running_speed"]
+# dim=1, type=CONTINUOUS
+# timestamp_key="running.timestamps", value_key="running.running_speed"
+```
+
+### Visual Stimulus Modalities
+
+```python
+# Drifting gratings orientation (8 directions)
+MODALITY_REGISTRY["drifting_gratings_orientation"]
+# dim=8, type=MULTINOMIAL
+# timestamp_key="drifting_gratings.timestamps"
+# value_key="drifting_gratings.orientation_id"
+
+# Drifting gratings temporal frequency (5 frequencies)
+MODALITY_REGISTRY["drifting_gratings_temporal_frequency"]
+# dim=5, type=MULTINOMIAL
+
+# Natural movie frames
+MODALITY_REGISTRY["natural_movie_one_frame"]
+# dim=900, type=MULTINOMIAL (900 possible frames)
+
+# Static gratings parameters
+MODALITY_REGISTRY["static_gratings_orientation"]     # dim=6
+MODALITY_REGISTRY["static_gratings_spatial_frequency"]  # dim=5
+MODALITY_REGISTRY["static_gratings_phase"]           # dim=5
+
+# Natural scenes
+MODALITY_REGISTRY["natural_scenes"]
+# dim=119, type=MULTINOMIAL (119 image classes)
+
+# Gabor patches
+MODALITY_REGISTRY["gabor_orientation"]  # dim=4, type=MULTINOMIAL
+MODALITY_REGISTRY["gabor_pos_2d"]       # dim=2, type=CONTINUOUS (9x9 grid)
+```
+
+### Eye Tracking Modalities
+
+```python
+# 2D gaze position
+MODALITY_REGISTRY["gaze_pos_2d"]
+# dim=2, type=CONTINUOUS
+# timestamp_key="gaze.timestamps", value_key="gaze.pos_2d"
+
+# Pupil location
+MODALITY_REGISTRY["pupil_location"]
+# dim=2, type=CONTINUOUS
+
+# Pupil size (2D: width and height)
+MODALITY_REGISTRY["pupil_size_2d"]
+# dim=2, type=CONTINUOUS
+```
+
+## Registering Custom Modalities
+
+### Example: Custom Behavioral Variable
+
+```python
+import torch_brain
+from torch_brain.registry import register_modality, DataType
+
+# Register 3D hand position
+register_modality(
+    "hand_position_3d",
+    dim=3,
+    type=DataType.CONTINUOUS,
+    timestamp_key="behavior.timestamps",
+    value_key="behavior.hand_pos_3d",
+    loss_fn=torch_brain.nn.loss.MSELoss()
+)
+
+# Register EMG activation (continuous muscle activity)
+register_modality(
+    "emg_activation",
+    dim=8,  # 8 muscle groups
+    type=DataType.CONTINUOUS,
+    timestamp_key="emg.timestamps",
+    value_key="emg.activation",
+    loss_fn=torch_brain.nn.loss.MSELoss()
+)
+```
+
+### Example: Custom Stimulus
+
+```python
+# Register a custom visual stimulus with 16 categories
+register_modality(
+    "custom_visual_stimulus",
+    dim=16,
+    type=DataType.MULTINOMIAL,
+    timestamp_key="stimulus.timestamps",
+    value_key="stimulus.category_id",
+    loss_fn=torch_brain.nn.loss.CrossEntropyLoss()
+)
+
+# Register binary decision variable
+register_modality(
+    "choice_left_right",
+    dim=1,
+    type=DataType.BINARY,
+    timestamp_key="trial.timestamps",
+    value_key="trial.choice",
+    loss_fn=torch_brain.nn.loss.BCEWithLogitsLoss()
+)
+```
+
+### Example: Multi-Label Classification
+
+```python
+# Multiple simultaneous stimulus features
+register_modality(
+    "multi_feature_stimulus",
+    dim=10,  # 10 possible features, multiple can be active
+    type=DataType.MULTILABEL,
+    timestamp_key="stimulus.timestamps",
+    value_key="stimulus.features",
+    loss_fn=torch_brain.nn.loss.BCEWithLogitsLoss()
+)
+```
+
+## Accessing Data via Modalities
+
+Modalities define how to access data in `temporaldata.Data` objects:
+
+```python
+from torch_brain.data import Dataset
+from torch_brain.registry import MODALITY_REGISTRY
+
+# Load data
+dataset = Dataset(
+    root="/path/to/data",
+    recording_id="brainset/session",
+    split="train"
+)
+
+data = dataset.get(recording_id="brainset/session", start=0, end=10)
+
+# Access via modality spec
+modality = MODALITY_REGISTRY["cursor_velocity_2d"]
+
+# Get timestamps
+timestamps = eval(f"data.{modality.timestamp_key}")
+# Equivalent to: data.cursor.timestamps
+
+# Get values
+values = eval(f"data.{modality.value_key}")
+# Equivalent to: data.cursor.vel
+
+print(f"Shape: {values.shape}")  # (num_timepoints, 2)
+```
+
+<Note>
+  The `timestamp_key` and `value_key` use dot notation to navigate nested attributes in the Data object.
+</Note>
+
+### Nested Attribute Access
+
+```python
+# These are equivalent:
+modality = MODALITY_REGISTRY["drifting_gratings_orientation"]
+
+# Using modality keys
+key_parts = modality.value_key.split('.')  # ["drifting_gratings", "orientation_id"]
+target = getattr(data, key_parts[0])
+value = getattr(target, key_parts[1])
+
+# Direct access
+value = data.drifting_gratings.orientation_id
+```
+
+## Using Modalities in Models
+
+Modalities inform model architecture and loss computation:
+
+```python
+import torch
+import torch.nn as nn
+from torch_brain.registry import MODALITY_REGISTRY
+
+class MultiModalDecoder(nn.Module):
+    def __init__(self, input_dim, modality_names):
+        super().__init__()
+        self.modalities = [MODALITY_REGISTRY[name] for name in modality_names]
+        
+        # Create decoder heads for each modality
+        self.decoders = nn.ModuleDict({
+            name: nn.Linear(input_dim, MODALITY_REGISTRY[name].dim)
+            for name in modality_names
+        })
+        
+    def forward(self, neural_activity):
+        # Encode neural activity
+        embedding = self.encoder(neural_activity)
+        
+        # Decode to each modality
+        outputs = {
+            name: self.decoders[name](embedding)
+            for name in self.decoders.keys()
+        }
+        return outputs
+    
+    def compute_loss(self, outputs, data):
+        total_loss = 0
+        losses = {}
+        
+        for modality_name, modality_spec in zip(self.decoders.keys(), self.modalities):
+            # Get ground truth via modality keys
+            target = eval(f"data.{modality_spec.value_key}")
+            
+            # Compute modality-specific loss
+            loss = modality_spec.loss_fn(outputs[modality_name], target)
+            losses[modality_name] = loss
+            total_loss += loss
+            
+        return total_loss, losses
+
+# Usage
+model = MultiModalDecoder(
+    input_dim=256,
+    modality_names=["cursor_velocity_2d", "running_speed"]
+)
+
+outputs = model(neural_data)
+loss, loss_dict = model.compute_loss(outputs, data)
+```
+
+## Loss Functions
+
+Each modality has an associated loss function appropriate for its data type:
+
+```python
+from torch_brain.nn.loss import MSELoss, CrossEntropyLoss, BCEWithLogitsLoss
+
+# Continuous: Mean Squared Error
+register_modality(
+    "velocity",
+    dim=2,
+    type=DataType.CONTINUOUS,
+    timestamp_key="cursor.timestamps",
+    value_key="cursor.vel",
+    loss_fn=MSELoss()
+)
+
+# Multinomial: Cross Entropy
+register_modality(
+    "stimulus_class",
+    dim=10,
+    type=DataType.MULTINOMIAL,
+    timestamp_key="stimulus.timestamps",
+    value_key="stimulus.class_id",
+    loss_fn=CrossEntropyLoss()
+)
+
+# Binary: Binary Cross Entropy with Logits
+register_modality(
+    "choice",
+    dim=1,
+    type=DataType.BINARY,
+    timestamp_key="trial.timestamps",
+    value_key="trial.choice",
+    loss_fn=BCEWithLogitsLoss()
+)
+```
+
+<Info>
+  Loss functions can be customized per modality. You can override the default loss when registering or replace it later in the ModalitySpec.
+</Info>
+
+## Advanced: Conditional Modalities
+
+Some modalities are only present in certain recordings:
+
+```python
+from torch_brain.registry import MODALITY_REGISTRY
+
+def get_available_modalities(data):
+    """Return list of modalities present in this data object"""
+    available = []
+    
+    for name, spec in MODALITY_REGISTRY.items():
+        # Check if this modality's data exists
+        try:
+            # Navigate to the data location
+            parts = spec.value_key.split('.')
+            obj = data
+            for part in parts:
+                obj = getattr(obj, part)
+            available.append(name)
+        except AttributeError:
+            # Modality not present in this recording
+            continue
+            
+    return available
+
+# Usage
+available = get_available_modalities(data)
+print(f"Available modalities: {available}")
+# ['cursor_velocity_2d', 'running_speed', 'pupil_size_2d']
+```
+
+## Best Practices
+
+<Info>
+  **Naming Convention**: Use descriptive names with dimensionality suffix (e.g., `cursor_velocity_2d`, `hand_position_3d`)
+</Info>
+
+<Info>
+  **Consistent Keys**: Use standard attribute paths that match your data format (e.g., all cursor data under `cursor.*`)
+</Info>
+
+<Warning>
+  Register modalities at module initialization, not during training loops. Registration is a global operation.
+</Warning>
+
+**Recommended workflow:**
+
+```python
+# config/modalities.py
+import torch_brain
+from torch_brain.registry import register_modality, DataType
+
+def register_custom_modalities():
+    """Register all project-specific modalities"""
+    register_modality(
+        "custom_modality_1",
+        dim=3,
+        type=DataType.CONTINUOUS,
+        timestamp_key="custom.timestamps",
+        value_key="custom.values",
+        loss_fn=torch_brain.nn.loss.MSELoss()
+    )
+    # ... more modalities
+
+# main.py
+from config.modalities import register_custom_modalities
+
+register_custom_modalities()  # Do this once at startup
+
+# Now use modalities throughout your code
+from torch_brain.registry import MODALITY_REGISTRY
+```
+
+## Next Steps
+
+- Learn about [Data Loading](/concepts/data-loading) to access multi-modal data
+- Understand [Samplers](/concepts/samplers) for temporal slicing
+- Apply augmentation with [Transforms](/concepts/transforms)

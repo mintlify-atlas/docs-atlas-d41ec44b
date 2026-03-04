@@ -1,0 +1,318 @@
+---
+title: Data Loading
+description: Learn how torch_brain loads neural data using the Dataset class with lazy loading and multi-recording support
+---
+
+## Overview
+
+The `Dataset` class in torch_brain provides a flexible, memory-efficient way to work with large neural recordings. Unlike standard PyTorch datasets that directly provide samples, torch_brain's `Dataset` abstracts a collection of lazily-loaded recordings, enabling you to work with massive datasets that don't fit in memory.
+
+<Note>
+  The `Dataset` class is located at `torch_brain.data.dataset.Dataset`. Note that this is deprecated in favor of `torch_brain.dataset.Dataset` and will be removed in a future release.
+</Note>
+
+## Key Concepts
+
+### Lazy Loading
+
+The Dataset implements lazy loading in two dimensions:
+
+1. **Time**: Only the requested time interval is loaded, not the entire recording
+2. **Attributes**: Attributes are loaded only when requested, useful when you need just a subset of available data
+
+### Dataset Indexing
+
+The dataset uses a special indexing system via the `DatasetIndex` dataclass:
+
+```python
+from torch_brain.data.dataset import DatasetIndex
+
+@dataclass
+class DatasetIndex:
+    recording_id: str  # e.g., "brainset_id/session_id"
+    start: float       # Start time in seconds
+    end: float         # End time in seconds
+```
+
+This deviates from standard PyTorch datasets - instead of directly providing samples, the Dataset provides recordings that are sliced by samplers (see [Samplers](/concepts/samplers)).
+
+## Creating a Dataset
+
+### Single Recording
+
+Load a single recording by specifying its ID:
+
+```python
+from torch_brain.data import Dataset
+
+dataset = Dataset(
+    root="/path/to/data",
+    recording_id="perich_miller_population_2018/c_20131003_center_out_reaching",
+    split="train"
+)
+```
+
+### Multiple Recordings with Config
+
+For multiple recordings, use a configuration file:
+
+```python
+dataset = Dataset(
+    root="/path/to/data",
+    config="config.yaml",
+    split="train"
+)
+```
+
+Example configuration structure:
+
+```yaml
+- selection:
+  - brainset: "perich_miller_population_2018"
+    session: "c_20131003_center_out_reaching"
+  config:
+    sampling_intervals_modifier: |
+      # Custom code to modify sampling intervals
+      sampling_intervals = sampling_intervals[:10]
+
+- selection:
+  - brainset: "allen_visual_coding_neuropixels"
+    subjects: ["mouse_1", "mouse_2"]
+```
+
+### Selection Options
+
+The config supports flexible filtering:
+
+- **`brainset`**: Required. The brainset name
+- **`session`/`sessions`**: Filter by specific session(s)
+- **`subject`/`subjects`**: Filter by subject ID(s)
+- **`exclude_sessions`**: Exclude specific sessions from selection
+
+```python
+# Example: Select all sessions from a specific subject
+- selection:
+  - brainset: "my_brainset"
+    subject: "subject_01"
+```
+
+## Using the Dataset
+
+### Getting Data Slices
+
+The primary method to extract data is `get()`:
+
+```python
+# Get a 2-second slice from 100s to 102s
+data = dataset.get(
+    recording_id="brainset/session_id",
+    start=100.0,
+    end=102.0
+)
+```
+
+This returns a `temporaldata.Data` object containing all modalities for that time window.
+
+### Using with DatasetIndex
+
+The dataset supports indexing with `DatasetIndex` objects:
+
+```python
+index = DatasetIndex(
+    recording_id="brainset/session_id",
+    start=100.0,
+    end=102.0
+)
+
+sample = dataset[index]  # Applies transforms if specified
+```
+
+### Getting Full Recordings
+
+<Warning>
+  `get_recording_data()` may load the full recording into memory. Use with caution on large datasets.
+</Warning>
+
+```python
+# Get complete recording data (respecting split)
+recording = dataset.get_recording_data(
+    recording_id="brainset/session_id"
+)
+```
+
+If a split is specified, the data is sliced to the allowed sampling intervals for that split to prevent data leakage.
+
+### Sampling Intervals
+
+Get the valid time intervals for sampling from each recording:
+
+```python
+sampling_intervals = dataset.get_sampling_intervals()
+
+# Returns a dict: {recording_id: Interval}
+# Example: {'brainset/session': Interval(start=[0, 100], end=[50, 150])}
+```
+
+Sampling intervals respect the split (train/valid/test) and can be modified using `sampling_intervals_modifier` in the config.
+
+## Data Splits
+
+Support for train/validation/test splits prevents data leakage:
+
+```python
+# Training data
+train_dataset = Dataset(
+    root="/path/to/data",
+    recording_id="brainset/session",
+    split="train"
+)
+
+# Validation data
+valid_dataset = Dataset(
+    root="/path/to/data",
+    recording_id="brainset/session",
+    split="valid"
+)
+```
+
+<Info>
+  Splits are defined in the HDF5 files using `train_domain`, `valid_domain`, and `test_domain` attributes.
+</Info>
+
+The dataset automatically checks for data leakage. To disable (use with caution):
+
+```python
+dataset.disable_data_leakage_check()
+```
+
+## Transforms
+
+Apply transformations to samples when they're loaded:
+
+```python
+from torch_brain.transforms import UnitDropout, RandomTimeScaling, Compose
+
+transform = Compose([
+    UnitDropout(min_units=20, mode_units=100),
+    RandomTimeScaling(min_scale=0.9, max_scale=1.1)
+])
+
+dataset = Dataset(
+    root="/path/to/data",
+    recording_id="brainset/session",
+    transform=transform
+)
+```
+
+See [Transforms](/concepts/transforms) for more details.
+
+## ID Prefixing
+
+When combining data from multiple brainsets, unit/session/subject IDs might collide. The Dataset automatically prefixes IDs to ensure uniqueness:
+
+```python
+# Default prefix functions
+default_unit_id_prefix_fn = lambda data: f"{data.brainset.id}/{data.session.id}/"
+default_session_id_prefix_fn = lambda data: f"{data.brainset.id}/"
+default_subject_id_prefix_fn = lambda data: f"{data.brainset.id}/"
+
+# Custom prefix function
+def custom_prefix(data):
+    return f"{data.subject.id}_"
+
+dataset = Dataset(
+    root="/path/to/data",
+    config="config.yaml",
+    unit_id_prefix_fn=custom_prefix
+)
+```
+
+## File Management
+
+By default, HDF5 file references are kept open for performance:
+
+```python
+# Keep files open (default, faster)
+dataset = Dataset(
+    root="/path/to/data",
+    recording_id="brainset/session",
+    keep_files_open=True
+)
+
+# Open files on demand (slower, lower memory)
+dataset = Dataset(
+    root="/path/to/data",
+    recording_id="brainset/session",
+    keep_files_open=False
+)
+```
+
+<Note>
+  Keeping files open only maintains file handles, not the actual data in memory. Data is still loaded lazily.
+</Note>
+
+Files are automatically closed when the Dataset object is destroyed:
+
+```python
+# Manually close files if needed
+dataset._close_open_files()
+```
+
+## Utility Methods
+
+```python
+# Get all unit IDs across all recordings
+unit_ids = dataset.get_unit_ids()
+
+# Get all session IDs
+session_ids = dataset.get_session_ids()
+
+# Get all subject IDs
+subject_ids = dataset.get_subject_ids()
+
+# Get all brainset IDs
+brainset_ids = dataset.get_brainset_ids()
+
+# Get configuration for each recording
+configs = dataset.get_recording_config_dict()
+```
+
+## Example: Complete Workflow
+
+```python
+from torch_brain.data import Dataset
+from torch_brain.data.sampler import RandomFixedWindowSampler
+from torch.utils.data import DataLoader
+
+# Create dataset
+dataset = Dataset(
+    root="/path/to/data",
+    recording_id="perich_miller_population_2018/c_20131003_center_out_reaching",
+    split="train"
+)
+
+# Create sampler
+sampler = RandomFixedWindowSampler(
+    sampling_intervals=dataset.get_sampling_intervals(),
+    window_length=1.0
+)
+
+# Create dataloader
+dataloader = DataLoader(
+    dataset,
+    batch_size=32,
+    sampler=sampler
+)
+
+# Iterate over batches
+for batch in dataloader:
+    # batch contains Data objects with 1-second windows
+    spikes = batch.spikes
+    # ... process batch
+```
+
+## Next Steps
+
+- Learn how to slice data into samples with [Samplers](/concepts/samplers)
+- Augment your data with [Transforms](/concepts/transforms)
+- Work with multiple data types using [Modalities](/concepts/modalities)

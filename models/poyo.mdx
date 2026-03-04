@@ -1,0 +1,233 @@
+---
+title: POYO
+description: A Unified, Scalable Framework for Neural Population Decoding
+---
+
+POYO is a transformer-based model for neural decoding from electrophysiological recordings, published at NeurIPS 2023.
+
+<Card title="Paper" icon="file-lines" href="https://arxiv.org/abs/2310.16046">
+  Azabou et al. 2023 - A Unified, Scalable Framework for Neural Population Decoding
+</Card>
+
+<Card title="NeurIPS Proceedings" icon="link" href="https://papers.nips.cc/paper_files/paper/2023/hash/8ca113d122584f12a6727341aaf58887-Abstract-Conference.html">
+  Official NeurIPS 2023 publication
+</Card>
+
+## Architecture
+
+POYO processes neural spike sequences through the following steps:
+
+1. **Input Token Construction**: Combines unit embeddings, token type embeddings, and time embeddings for each spike
+2. **Compression**: Cross-attention compresses the input sequence into learnable latent tokens with associated timestamps
+3. **Processing**: Multiple self-attention layers refine the latent representations
+4. **Query Construction**: Combines session embeddings with output timestamps
+5. **Decoding**: Cross-attention produces outputs in the model's dimensional space
+6. **Readout**: Task-specific linear layer maps to the appropriate output dimension
+
+## Usage
+
+### Basic Initialization
+
+```python
+from torch_brain.models import POYO
+from torch_brain.registry import ModalitySpec
+
+# Define your readout specification
+readout_spec = ModalitySpec(
+    name="velocity",
+    dim=2,  # x and y velocity
+    loss_fn=mse_loss,
+    # ... other specs
+)
+
+# Initialize POYO
+model = POYO(
+    sequence_length=1.0,  # 1 second windows
+    readout_spec=readout_spec,
+    latent_step=0.125,  # latent tokens every 125ms
+    num_latents_per_step=64,
+    dim=512,
+    depth=2,
+    dim_head=64,
+    cross_heads=1,
+    self_heads=8,
+)
+```
+
+### Initialize Vocabularies
+
+Before using the model, you must initialize the unit and session vocabularies:
+
+```python
+# Get all unit IDs from your dataset
+unit_ids = dataset.get_unit_ids()
+model.unit_emb.initialize_vocab(unit_ids)
+
+# Get all session IDs from your dataset
+session_ids = dataset.recording_ids
+model.session_emb.initialize_vocab(session_ids)
+```
+
+### Forward Pass
+
+```python
+import torch
+
+# Prepare inputs (typically done by the tokenizer)
+output = model(
+    # Input sequence (spikes)
+    input_unit_index=unit_indices,
+    input_timestamps=spike_times,
+    input_token_type=token_types,
+    input_mask=input_mask,
+    # Latent sequence
+    latent_index=latent_indices,
+    latent_timestamps=latent_times,
+    # Output queries
+    output_session_index=session_indices,
+    output_timestamps=output_times,
+    output_mask=output_mask,
+)
+# output shape: (batch, n_out, dim_out)
+```
+
+### Using the Tokenizer
+
+POYO includes a built-in tokenizer for converting `temporaldata.Data` objects:
+
+```python
+from temporaldata import Data
+
+# Apply tokenizer as a transform
+tokenized = model.tokenize(data)
+
+# Returns a dict with:
+# - model_inputs: dict of tensors for forward pass
+# - target_values: ground truth targets
+# - target_weights: optional weights
+# - eval_mask: mask for evaluation
+```
+
+### Loading Pretrained Models
+
+```python
+from pathlib import Path
+
+model = POYO.load_pretrained(
+    checkpoint_path="path/to/checkpoint.ckpt",
+    readout_spec=readout_spec,
+    skip_readout=False,  # Set True to reinitialize readout layer
+)
+```
+
+## Parameters
+
+<ParamField path="sequence_length" type="float" required>
+  Maximum duration of the input spike sequence in seconds
+</ParamField>
+
+<ParamField path="readout_spec" type="ModalitySpec" required>
+  A `ModalitySpec` object specifying readout properties including output dimension and loss function
+</ParamField>
+
+<ParamField path="latent_step" type="float" required>
+  Timestep of the latent grid in seconds. For example, `0.125` means latent tokens every 125ms
+</ParamField>
+
+<ParamField path="num_latents_per_step" type="int" default="64">
+  Number of unique latent tokens repeated at every latent step. Controls the capacity of the compressed representation
+</ParamField>
+
+<ParamField path="dim" type="int" default="512">
+  Hidden dimension of the model. All embeddings and layer outputs have this dimension
+</ParamField>
+
+<ParamField path="depth" type="int" default="2">
+  Number of processing layers (self-attention blocks in the latent space)
+</ParamField>
+
+<ParamField path="dim_head" type="int" default="64">
+  Dimension of each attention head
+</ParamField>
+
+<ParamField path="cross_heads" type="int" default="1">
+  Number of attention heads used in cross-attention layers (encoder and decoder)
+</ParamField>
+
+<ParamField path="self_heads" type="int" default="8">
+  Number of attention heads used in self-attention layers (processing)
+</ParamField>
+
+<ParamField path="ffn_dropout" type="float" default="0.2">
+  Dropout rate for feed-forward networks
+</ParamField>
+
+<ParamField path="lin_dropout" type="float" default="0.4">
+  Dropout rate for linear layers in the processing blocks
+</ParamField>
+
+<ParamField path="atn_dropout" type="float" default="0.0">
+  Dropout rate for attention layers
+</ParamField>
+
+<ParamField path="emb_init_scale" type="float" default="0.02">
+  Scale for embedding initialization using truncated normal distribution
+</ParamField>
+
+<ParamField path="t_min" type="float" default="1e-4">
+  Minimum timestamp resolution for rotary embeddings (in seconds)
+</ParamField>
+
+<ParamField path="t_max" type="float" default="2.0627">
+  Maximum timestamp resolution for rotary embeddings (in seconds)
+</ParamField>
+
+## Example: POYO-MP
+
+The POYO-MP configuration from the paper (trained on Perich-Miller dataset):
+
+```python
+from torch_brain.models.poyo import poyo_mp
+
+# Convenience function for POYO-MP architecture
+model = poyo_mp(readout_spec=readout_spec)
+
+# Equivalent to:
+model = POYO(
+    sequence_length=1.0,
+    latent_step=1.0 / 8,  # 125ms
+    dim=64,
+    readout_spec=readout_spec,
+    dim_head=64,
+    num_latents_per_step=16,
+    depth=6,
+    cross_heads=2,
+    self_heads=8,
+    ffn_dropout=0.2,
+    lin_dropout=0.4,
+    atn_dropout=0.2,
+    emb_init_scale=0.02,
+    t_min=1e-4,
+    t_max=4.0,
+)
+```
+
+## Training Example
+
+See `torch_brain/models/poyo.py:29` for the full implementation.
+
+For complete training examples with PyTorch Lightning:
+- [POYO training script](https://github.com/neuro-galaxy/torch_brain/tree/main/examples/poyo/train.py)
+- [POYO-MP config](https://github.com/neuro-galaxy/torch_brain/tree/main/examples/poyo)
+
+## Citation
+
+```bibtex
+@inproceedings{
+    azabou2023unified,
+    title={A Unified, Scalable Framework for Neural Population Decoding},
+    author={Mehdi Azabou and Vinam Arora and Venkataramana Ganesh and Ximeng Mao and Santosh Nachimuthu and Michael Mendelson and Blake Richards and Matthew Perich and Guillaume Lajoie and Eva L. Dyer},
+    booktitle={Thirty-seventh Conference on Neural Information Processing Systems},
+    year={2023},
+}
+```

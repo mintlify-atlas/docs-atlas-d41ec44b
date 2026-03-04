@@ -1,0 +1,458 @@
+---
+title: Samplers
+description: Sampling strategies for neural recording datasets
+---
+
+The `torch_brain.data.sampler` module provides various samplers for creating training and evaluation batches from neural recording datasets.
+
+## Overview
+
+All samplers work with `sampling_intervals` dictionaries that map recording IDs to `Interval` objects defining valid time ranges. Samplers generate `DatasetIndex` objects that specify which recording and time window to load.
+
+## RandomFixedWindowSampler
+
+```python
+class RandomFixedWindowSampler(torch.utils.data.Sampler)
+```
+
+Samples fixed-length windows randomly from specified intervals. Applies shuffling and random temporal jitter.
+
+### Constructor
+
+```python
+RandomFixedWindowSampler(
+    *,
+    sampling_intervals,
+    window_length,
+    generator=None,
+    drop_short=True
+)
+```
+
+<ParamField path="sampling_intervals" type="Dict[str, Interval]" required>
+  Dictionary mapping recording IDs to `Interval` objects representing valid sampling ranges.
+</ParamField>
+
+<ParamField path="window_length" type="float" required>
+  Length of the window to sample in seconds.
+</ParamField>
+
+<ParamField path="generator" type="Optional[torch.Generator]">
+  Random generator for reproducible shuffling.
+</ParamField>
+
+<ParamField path="drop_short" type="bool" default="True">
+  Whether to drop intervals shorter than `window_length`.
+</ParamField>
+
+### Number of Samples
+
+The number of samples generated per interval per epoch is:
+
+$$
+N = \left\lfloor\frac{\text{interval\_length}}{\text{window\_length}}\right\rfloor
+$$
+
+### Methods
+
+#### \_\_len\_\_
+
+Returns the total number of samples across all intervals.
+
+#### \_\_iter\_\_
+
+Yields shuffled `DatasetIndex` objects with random temporal jitter.
+
+### Example
+
+```python
+from torch_brain.data import Dataset
+from torch_brain.data.sampler import RandomFixedWindowSampler
+from torch.utils.data import DataLoader
+from temporaldata import Interval
+
+# Create dataset
+dataset = Dataset(root="/path/to/data", config="config.yaml", split="train")
+
+# Create sampler with 5-second windows
+sampler = RandomFixedWindowSampler(
+    sampling_intervals=dataset.get_sampling_intervals(),
+    window_length=5.0,
+    generator=torch.Generator().manual_seed(42)
+)
+
+print(f"Total samples: {len(sampler)}")
+
+# Use with DataLoader
+loader = DataLoader(dataset, sampler=sampler, batch_size=32)
+```
+
+## SequentialFixedWindowSampler
+
+```python
+class SequentialFixedWindowSampler(torch.utils.data.Sampler)
+```
+
+Samples fixed-length windows sequentially in deterministic order. Useful for evaluation and validation.
+
+### Constructor
+
+```python
+SequentialFixedWindowSampler(
+    *,
+    sampling_intervals,
+    window_length,
+    step=None,
+    drop_short=False
+)
+```
+
+<ParamField path="sampling_intervals" type="Dict[str, List[Tuple[float, float]]]" required>
+  Dictionary mapping recording IDs to lists of (start, end) tuples.
+</ParamField>
+
+<ParamField path="window_length" type="float" required>
+  Length of the window to sample in seconds.
+</ParamField>
+
+<ParamField path="step" type="Optional[float]">
+  Step size between consecutive windows. Defaults to `window_length` (no overlap).
+</ParamField>
+
+<ParamField path="drop_short" type="bool" default="False">
+  Whether to drop windows smaller than `window_length`.
+</ParamField>
+
+### Behavior
+
+- Windows are generated sequentially with the specified step size
+- If an interval's length is not evenly divisible by step, the last window is added with overlap to ensure complete coverage
+- Indices are cached since they are deterministic
+
+### Methods
+
+#### \_\_len\_\_
+
+Returns the total number of windows.
+
+#### \_\_iter\_\_
+
+Yields `DatasetIndex` objects in sequential order.
+
+### Example
+
+```python
+from torch_brain.data.sampler import SequentialFixedWindowSampler
+from temporaldata import Interval
+
+# Sequential sampling with 50% overlap
+sampler = SequentialFixedWindowSampler(
+    sampling_intervals={
+        "session1": Interval([0, 100], [50, 150]),
+        "session2": Interval([0], [100])
+    },
+    window_length=10.0,
+    step=5.0  # 50% overlap
+)
+
+for idx in sampler:
+    print(f"Recording: {idx.recording_id}, Time: {idx.start:.1f}-{idx.end:.1f}s")
+```
+
+## TrialSampler
+
+```python
+class TrialSampler(torch.utils.data.Sampler)
+```
+
+Samples complete trial intervals. Each interval is treated as a single sample without subdivision.
+
+### Constructor
+
+```python
+TrialSampler(
+    *,
+    sampling_intervals,
+    generator=None,
+    shuffle=False
+)
+```
+
+<ParamField path="sampling_intervals" type="Dict[str, List[Tuple[float, float]]]" required>
+  Dictionary mapping recording IDs to lists of trial (start, end) tuples.
+</ParamField>
+
+<ParamField path="generator" type="Optional[torch.Generator]">
+  Random generator for shuffling (if `shuffle=True`).
+</ParamField>
+
+<ParamField path="shuffle" type="bool" default="False">
+  Whether to shuffle the trial order.
+</ParamField>
+
+### Methods
+
+#### \_\_len\_\_
+
+Returns the total number of trials across all recordings.
+
+#### \_\_iter\_\_
+
+Yields `DatasetIndex` objects, one per trial.
+
+### Example
+
+```python
+from torch_brain.data.sampler import TrialSampler
+from temporaldata import Interval
+
+# Sample complete trials
+sampler = TrialSampler(
+    sampling_intervals={
+        "session1": Interval([0, 10, 20], [5, 15, 25]),  # 3 trials
+        "session2": Interval([0, 8], [4, 12])  # 2 trials
+    },
+    shuffle=True,
+    generator=torch.Generator().manual_seed(42)
+)
+
+print(f"Total trials: {len(sampler)}")  # Output: 5
+```
+
+## DistributedEvaluationSamplerWrapper
+
+```python
+class DistributedEvaluationSamplerWrapper(torch.utils.data.Sampler)
+```
+
+Wraps a sampler for distributed evaluation. Unlike standard distributed samplers that drop samples to ensure equal sizes, this preserves all samples by distributing them across ranks without dropping.
+
+<Warning>
+  Some ranks may perform more steps than others. Only suitable for evaluation where there's no communication between ranks except at the beginning or end.
+</Warning>
+
+### Constructor
+
+```python
+DistributedEvaluationSamplerWrapper(
+    sampler,
+    num_replicas=None,
+    rank=None
+)
+```
+
+<ParamField path="sampler" type="torch.utils.data.Sampler" required>
+  The original sampler to wrap.
+</ParamField>
+
+<ParamField path="num_replicas" type="Optional[int]">
+  Number of processes in distributed evaluation. Auto-detected if not provided.
+</ParamField>
+
+<ParamField path="rank" type="Optional[int]">
+  Rank of the current process. Auto-detected if not provided.
+</ParamField>
+
+### Methods
+
+#### set_params
+
+```python
+set_params(num_replicas: int, rank: int)
+```
+
+Manually set distributed parameters.
+
+#### rank_len
+
+```python
+rank_len() -> int
+```
+
+Returns the number of samples assigned to the current rank.
+
+#### \_\_len\_\_
+
+Returns samples for current rank if parameters are set, otherwise total samples.
+
+#### \_\_iter\_\_
+
+Yields samples assigned to the current rank.
+
+### Example
+
+```python
+from torch_brain.data.sampler import (
+    SequentialFixedWindowSampler,
+    DistributedEvaluationSamplerWrapper
+)
+from temporaldata import Interval
+
+# Base sampler
+base_sampler = SequentialFixedWindowSampler(
+    sampling_intervals={"session1": Interval([0], [100])},
+    window_length=10.0
+)
+
+# Wrap for distributed evaluation
+dist_sampler = DistributedEvaluationSamplerWrapper(
+    sampler=base_sampler,
+    num_replicas=4,
+    rank=0
+)
+
+print(f"Rank 0 samples: {len(dist_sampler)}")
+```
+
+## DistributedStitchingFixedWindowSampler
+
+```python
+class DistributedStitchingFixedWindowSampler(torch.utils.data.DistributedSampler)
+```
+
+Specialized sampler for distributed sliding window inference with prediction stitching. Keeps windows that need stitching on the same rank to avoid inter-rank communication.
+
+### Constructor
+
+```python
+DistributedStitchingFixedWindowSampler(
+    *,
+    sampling_intervals,
+    window_length,
+    step=None,
+    batch_size,
+    num_replicas=None,
+    rank=None
+)
+```
+
+<ParamField path="sampling_intervals" type="Dict[str, Interval]" required>
+  Dictionary mapping recording IDs to `Interval` objects.
+</ParamField>
+
+<ParamField path="window_length" type="float" required>
+  Length of the sliding window in seconds.
+</ParamField>
+
+<ParamField path="step" type="Optional[float]">
+  Step size between windows. Defaults to `window_length`. Smaller steps create more overlap.
+</ParamField>
+
+<ParamField path="batch_size" type="int" required>
+  Number of windows per batch.
+</ParamField>
+
+<ParamField path="num_replicas" type="Optional[int]">
+  Number of distributed processes. Auto-detected from `torch.distributed` if not provided.
+</ParamField>
+
+<ParamField path="rank" type="Optional[int]">
+  Rank of current process. Auto-detected from `torch.distributed` if not provided.
+</ParamField>
+
+### Key Features
+
+- Distributes overlapping windows across ranks while keeping sequences that need stitching together on the same rank
+- Tracks `sequence_index` to identify which windows belong to the same contiguous sequence
+- Balances workload based on number of windows per interval
+- Enables memory-efficient stitching by allowing results to be combined as soon as all windows from a sequence are available
+
+### Attributes
+
+<ResponseField name="indices" type="List[DatasetIndex]">
+  List of window indices assigned to this rank.
+</ResponseField>
+
+<ResponseField name="sequence_index" type="torch.Tensor">
+  Tensor mapping each window to its sequence ID, used for stitching windows from the same contiguous interval.
+</ResponseField>
+
+### Methods
+
+#### set_epoch
+
+```python
+set_epoch(epoch: int)
+```
+
+Set the epoch number. Included for API compatibility but not strictly necessary for sequential sampling.
+
+### Example
+
+```python
+import torch.distributed as dist
+from torch_brain.data.sampler import DistributedStitchingFixedWindowSampler
+from temporaldata import Interval
+
+# Initialize distributed environment
+dist.init_process_group(backend='nccl')
+
+# Create sampler with 50% overlap
+sampler = DistributedStitchingFixedWindowSampler(
+    sampling_intervals={
+        "session1": Interval([0, 100], [50, 200]),
+        "session2": Interval([0], [150])
+    },
+    window_length=10.0,
+    step=5.0,  # 50% overlap for stitching
+    batch_size=32
+)
+
+print(f"Rank {sampler.rank} has {len(sampler)} windows")
+print(f"Sequence indices: {sampler.sequence_index}")
+
+# Use with DataLoader
+loader = DataLoader(dataset, sampler=sampler, batch_size=32)
+
+for batch_idx, batch in enumerate(loader):
+    # Get sequence IDs for this batch
+    seq_ids = sampler.sequence_index[batch_idx * 32:(batch_idx + 1) * 32]
+    # Process and stitch predictions from same sequence
+    pass
+```
+
+## Common Patterns
+
+### Training with Random Sampling
+
+```python
+from torch_brain.data import Dataset
+from torch_brain.data.sampler import RandomFixedWindowSampler
+from torch.utils.data import DataLoader
+
+dataset = Dataset(root="/data", config="train.yaml", split="train")
+sampler = RandomFixedWindowSampler(
+    sampling_intervals=dataset.get_sampling_intervals(),
+    window_length=5.0
+)
+loader = DataLoader(dataset, sampler=sampler, batch_size=32, num_workers=4)
+```
+
+### Validation with Sequential Sampling
+
+```python
+val_dataset = Dataset(root="/data", config="val.yaml", split="val")
+val_sampler = SequentialFixedWindowSampler(
+    sampling_intervals=val_dataset.get_sampling_intervals(),
+    window_length=5.0,
+    step=5.0
+)
+val_loader = DataLoader(val_dataset, sampler=val_sampler, batch_size=32)
+```
+
+### Distributed Evaluation
+
+```python
+test_sampler = SequentialFixedWindowSampler(
+    sampling_intervals=test_dataset.get_sampling_intervals(),
+    window_length=10.0
+)
+
+dist_sampler = DistributedEvaluationSamplerWrapper(test_sampler)
+test_loader = DataLoader(test_dataset, sampler=dist_sampler, batch_size=16)
+```
+
+## See Also
+
+- [Dataset](/api/dataset) - Dataset class for loading neural recordings
+- [Collation Functions](/api/data) - Advanced collation utilities for variable-length data

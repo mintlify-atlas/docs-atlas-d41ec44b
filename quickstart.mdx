@@ -1,80 +1,326 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Train your first POYO model on neural data in minutes
 ---
 
-## Get started in three steps
+This guide walks you through training a basic POYO model for neural decoding. You'll learn how to load data, configure the model, and train it to decode behavior from neural activity.
 
-Get your documentation site running locally and make your first customization.
+## Overview
 
-### Step 1: Set up your local environment
+In this quickstart, you'll:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+1. Prepare a dataset for training
+2. Create a POYO model
+3. Initialize embeddings with your data
+4. Train the model to decode neural activity
+
+<Note>
+  This tutorial assumes you've already [installed torch_brain](/installation) and have access to neuroscience datasets through `brainsets`.
+</Note>
+
+## Prepare your dataset
+
+First, download a dataset using brainsets. We'll use the `perich_miller_population_2018` dataset:
+
+```bash
+brainsets prepare perich_miller_population_2018
+```
+
+This downloads and preprocesses motor cortex recordings from reaching tasks.
+
+## Basic POYO model
+
+POYO (Population Decoding using Transformers) is a transformer-based model that decodes behavior from neural population activity.
+
+### Create a model instance
+
+Here's how to create a POYO model:
+
+```python
+from torch_brain.models.poyo import POYO
+from torch_brain.registry import ModalitySpec
+import torch.nn as nn
+
+# Define the readout specification
+readout_spec = ModalitySpec(
+    name="hand_vel",
+    dim=2,  # 2D hand velocity
+    loss_fn=nn.MSELoss()
+)
+
+# Create POYO model
+model = POYO(
+    sequence_length=1.0,      # 1 second input windows
+    latent_step=1.0 / 8,      # 125ms latent grid resolution
+    num_latents_per_step=16,  # 16 latent tokens per timestep
+    dim=64,                   # Model hidden dimension
+    depth=6,                  # Number of processing layers
+    dim_head=64,              # Attention head dimension
+    cross_heads=2,            # Cross-attention heads
+    self_heads=8,             # Self-attention heads
+    readout_spec=readout_spec,
+    ffn_dropout=0.2,
+    lin_dropout=0.4,
+    atn_dropout=0.2,
+)
+```
+
+### Model architecture
+
+POYO processes neural data through three stages:
+
+<Steps>
+
+<Step title="Encoding">
+  Input spikes are converted to embeddings combining:
+  - **Unit embeddings** - Identity of each neuron
+  - **Token type embeddings** - Spike vs. boundary tokens
+  - **Time embeddings** - Temporal position via rotary embeddings
+  
+  These are compressed into a latent space using cross-attention.
+</Step>
+
+<Step title="Processing">
+  Latent representations are refined through multiple self-attention layers (controlled by `depth` parameter).
+</Step>
+
+<Step title="Decoding">
+  Query tokens attend to processed latents via cross-attention to produce predictions at desired timestamps.
+</Step>
+
+</Steps>
+
+## Load and prepare data
+
+Create a dataset that loads your neural recordings:
+
+```python
+from torch_brain.dataset import Dataset
+from torch_brain.transforms import Compose
+
+# Load dataset
+dataset = Dataset(
+    root="./data/processed/",
+    config="path/to/dataset_config.yaml",
+    split="train",
+)
+
+# Initialize model embeddings with dataset vocabularies
+unit_ids = dataset.get_unit_ids()
+session_ids = dataset.get_session_ids()
+
+model.unit_emb.initialize_vocab(unit_ids)
+model.session_emb.initialize_vocab(session_ids)
+```
+
+<Warning>
+  You must initialize the model's unit and session embeddings with your dataset vocabularies before training. The model uses infinite vocabulary embeddings that dynamically allocate space for each unique unit and session.
+</Warning>
+
+## Tokenize data
+
+POYO includes a tokenizer that converts neural data into model inputs:
+
+```python
+from temporaldata import Data
+
+# Get a sample from your dataset
+sample = dataset.get(
+    recording_id="perich_miller_population_2018/Mihili_20140304",
+    start=0.0,
+    end=1.0
+)
+
+# Tokenize the data
+tokenized = model.tokenize(sample)
+
+# The tokenized output contains:
+# - model_inputs: dict with input_unit_index, input_timestamps, 
+#                 latent tokens, output queries, etc.
+# - target_values: ground truth outputs
+# - target_weights: weighting for loss computation
+# - eval_mask: mask for evaluation
+```
+
+The tokenizer:
+- Creates start/end boundary tokens for each unit
+- Maps local unit indices to global vocabulary indices
+- Generates latent tokens on a regular temporal grid
+- Prepares output queries at desired prediction timestamps
+
+## Training loop
+
+Here's a minimal training example:
+
+```python
+import torch
+from torch.utils.data import DataLoader
+from torch_brain.data import collate
+from torch_brain.data.sampler import RandomFixedWindowSampler
+
+# Create sampler
+sampler = RandomFixedWindowSampler(
+    sampling_intervals=dataset.get_sampling_intervals("train"),
+    window_length=1.0,  # 1 second windows
+    generator=torch.Generator().manual_seed(42),
+)
+
+# Create dataloader
+loader = DataLoader(
+    dataset,
+    sampler=sampler,
+    collate_fn=collate,
+    batch_size=32,
+    num_workers=4,
+)
+
+# Training
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+model.train()
+
+for batch in loader:
+    # Forward pass
+    output = model(**batch["model_inputs"])
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    # Compute loss
+    mask = batch["model_inputs"]["output_mask"]
+    predictions = output[mask]
+    targets = batch["target_values"][mask]
+    weights = batch["target_weights"][mask]
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+    loss = readout_spec.loss_fn(predictions, targets)
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    # Backward pass
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+    
+    print(f"Loss: {loss.item():.4f}")
+```
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+## Full training script
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+For production training, we recommend using PyTorch Lightning. torch_brain includes a complete training script in `examples/poyo/train.py`.
 
-### Step 3: Go live
+### Setup training
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+<Steps>
+
+<Step title="Create configuration">
+
+Create a Hydra config file `configs/train_poyo_mp.yaml`:
+
+```yaml
+defaults:
+  - defaults.yaml
+  - model: poyo_11.8M.yaml
+
+dataset: 
+  _target_: datasets.poyo_mp.PoyoMPDataset
+
+train_transforms:
+  - _target_: torch_brain.transforms.UnitDropout
+    max_units: 300
+    min_units: 30
+    mode_units: 100
+    peak: 4
+
+wandb:
+  run_name: poyo_mp
+  project: poyo
+  enable: true
+```
+
+</Step>
+
+<Step title="Run training">
+
+```bash
+cd examples/poyo
+python train.py --config-name train_poyo_mp.yaml
+```
+
+This will:
+- Load the dataset and prepare data loaders
+- Initialize the POYO model
+- Train with automatic checkpointing
+- Log metrics to Weights & Biases
+- Evaluate on validation set
+
+</Step>
+
+</Steps>
+
+### Key training parameters
+
+The training script uses these important parameters:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `epochs` | 1000 | Number of training epochs |
+| `batch_size` | 128 | Batch size (scaled learning rate) |
+| `base_lr` | 3.125e-5 | Base learning rate (before scaling) |
+| `weight_decay` | 1e-4 | AdamW weight decay |
+| `sequence_length` | 1.0 | Input window length in seconds |
+| `latent_step` | 0.125 | Temporal resolution of latent grid |
+
+## Load pretrained models
+
+You can load pretrained POYO models for transfer learning or finetuning:
+
+```python
+from torch_brain.models.poyo import POYO
+from torch_brain.registry import ModalitySpec
+
+# Define readout for your task
+readout_spec = ModalitySpec(
+    name="hand_vel",
+    dim=2,
+    loss_fn=nn.MSELoss()
+)
+
+# Load pretrained model
+model = POYO.load_pretrained(
+    checkpoint_path="path/to/checkpoint.ckpt",
+    readout_spec=readout_spec,
+    skip_readout=True,  # Use new readout for different task
+)
+```
+
+<Note>
+  Set `skip_readout=True` when finetuning on a different task. This initializes a new readout layer while keeping the pretrained encoder, processor, and decoder.
+</Note>
+
+## Prebuilt model configurations
+
+Use the convenience function for POYO-MP (Motor Planning) with preset hyperparameters:
+
+```python
+from torch_brain.models.poyo import poyo_mp
+
+model = poyo_mp(readout_spec=readout_spec)
+```
+
+This creates a POYO model with:
+- 64-dimensional hidden space
+- 6 processing layers
+- 1-second sequence length
+- 125ms latent resolution
+- Optimized hyperparameters for motor decoding
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Model architecture" icon="diagram-project" href="/models/poyo">
+    Deep dive into POYO's architecture and design
+  </Card>
+  <Card title="Data loading" icon="database" href="/concepts/data-loading">
+    Learn advanced data loading techniques
+  </Card>
+  <Card title="Training tips" icon="lightbulb" href="/guides/training">
+    Best practices for training neural decoding models
+  </Card>
+  <Card title="API reference" icon="code" href="/api/data">
+    Complete API documentation for data handling
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

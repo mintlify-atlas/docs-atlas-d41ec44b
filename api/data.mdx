@@ -1,0 +1,276 @@
+---
+title: torch_brain.data
+description: Data module with collation utilities and dataset classes
+---
+
+The `torch_brain.data` module provides utilities for collating variable-length sequences and managing neural recording datasets.
+
+## Module Overview
+
+The module exports the following components:
+
+- **Collation Functions**: `collate`, `pad`, `pad2d`, `pad8`, `chain`
+- **Tracking Functions**: `track_batch`, `track_mask`, `track_mask8`
+- **Dataset Class**: `Dataset`
+- **Sampler Module**: `sampler` (see [Samplers](/api/samplers))
+
+## Collation Functions
+
+### collate
+
+```python
+torch_brain.data.collate(batch)
+```
+
+Extension of PyTorch's `default_collate` function to enable advanced collation of samples with variable lengths.
+
+<ParamField path="batch" type="List[Any]" required>
+  A single batch to be collated. Elements can be wrapped with `pad`, `pad2d`, `pad8`, or `chain` to specify collation behavior.
+</ParamField>
+
+<ResponseField name="output" type="Any">
+  Collated batch with the same structure as input elements, combined according to the specified collation recipes.
+</ResponseField>
+
+**Usage Notes:**
+- If an object is not wrapped, the default PyTorch collation recipe is used
+- Wrapped objects can be tensors, numpy arrays, lists, tuples, or dictionaries
+- If a wrapped object is an Iterable or Mapping, all its elements inherit the collation recipe
+
+**Example:**
+```python
+import torch
+from torch_brain.data import collate, pad, chain, track_mask
+
+# Create variable-length samples
+sample1 = {
+    'spikes': pad(torch.randn(100, 10)),  # 100 timesteps
+    'mask': track_mask(torch.randn(100, 10)),
+    'labels': chain(torch.tensor([0, 1, 0]))
+}
+
+sample2 = {
+    'spikes': pad(torch.randn(150, 10)),  # 150 timesteps
+    'mask': track_mask(torch.randn(150, 10)),
+    'labels': chain(torch.tensor([1, 1]))
+}
+
+batch = collate([sample1, sample2])
+# batch['spikes'] has shape (2, 150, 10) - padded to max length
+# batch['mask'] has shape (2, 150) - boolean mask tracking padding
+# batch['labels'] has shape (5,) - concatenated along first dimension
+```
+
+### pad
+
+```python
+torch_brain.data.pad(obj)
+```
+
+Wrap an object to specify that it (or any of its members) should be padded to the maximum length in the batch.
+
+<ParamField path="obj" type="Union[Tensor, ndarray, List, Tuple, Dict]" required>
+  Object to be padded. Can be tensors, numpy arrays, lists, tuples, or dictionaries.
+</ParamField>
+
+<ResponseField name="output" type="PaddedObject">
+  Wrapped object that will be padded during collation.
+</ResponseField>
+
+**Example:**
+```python
+from torch_brain.data import pad, collate
+import torch
+
+# Pad sequences to maximum length in batch
+batch = [
+    {'sequence': pad(torch.randn(50, 128))},
+    {'sequence': pad(torch.randn(75, 128))},
+    {'sequence': pad(torch.randn(60, 128))}
+]
+
+collated = collate(batch)
+# collated['sequence'].shape == (3, 75, 128)
+```
+
+### pad2d
+
+```python
+torch_brain.data.pad2d(obj)
+```
+
+Wrap an object to specify 2D padding (both dimensions padded to maximum in batch).
+
+<ParamField path="obj" type="Union[Tensor, ndarray, List, Tuple, Dict]" required>
+  Object to be padded in 2 dimensions. Must have at least 2 dimensions.
+</ParamField>
+
+<ResponseField name="output" type="Padded2dObject">
+  Wrapped object that will be padded in both first and second dimensions during collation.
+</ResponseField>
+
+**Example:**
+```python
+from torch_brain.data import pad2d, collate
+import torch
+
+# Pad 2D arrays to maximum height and width
+batch = [
+    {'matrix': pad2d(torch.randn(30, 40))},
+    {'matrix': pad2d(torch.randn(50, 35))},
+]
+
+collated = collate(batch)
+# collated['matrix'].shape == (2, 50, 40)  # max height=50, max width=40
+```
+
+### pad8
+
+```python
+torch_brain.data.pad8(obj)
+```
+
+Wrap an object to be padded to a length that is a multiple of 8. Useful for hardware optimization (e.g., tensor cores).
+
+<ParamField path="obj" type="Union[Tensor, ndarray, List, Tuple, Dict]" required>
+  Object to be padded to nearest multiple of 8.
+</ParamField>
+
+<ResponseField name="output" type="Padded8Object">
+  Wrapped object that will be padded to a multiple of 8 during collation.
+</ResponseField>
+
+**Example:**
+```python
+from torch_brain.data import pad8, collate
+import torch
+
+batch = [
+    {'data': pad8(torch.randn(50, 128))},
+    {'data': pad8(torch.randn(63, 128))},
+]
+
+collated = collate(batch)
+# collated['data'].shape == (2, 64, 128)  # 63 -> 64 (next multiple of 8)
+```
+
+### chain
+
+```python
+torch_brain.data.chain(obj, allow_missing_keys=False)
+```
+
+Wrap an object to be stacked along the first dimension (concatenated). Similar to PyTorch Geometric's collate approach for graphs.
+
+<ParamField path="obj" type="Union[Tensor, ndarray, List, Tuple, Dict]" required>
+  Object to be chained/concatenated. Can be tensors, numpy arrays, lists, tuples, or dictionaries.
+</ParamField>
+
+<ParamField path="allow_missing_keys" type="bool" default="False">
+  If `True`, allows dictionaries to have inconsistent keys across the batch. Missing keys will be skipped during collation. Only applicable when `obj` is a dictionary.
+</ParamField>
+
+<ResponseField name="output" type="ChainObject">
+  Wrapped object that will be concatenated along the first dimension during collation.
+</ResponseField>
+
+**Example:**
+```python
+from torch_brain.data import chain, track_batch, collate
+import torch
+
+# Chain sequences together
+batch = [
+    {'events': chain(torch.tensor([1, 2, 3])), 'batch_idx': track_batch(torch.tensor([1, 2, 3]))},
+    {'events': chain(torch.tensor([4, 5])), 'batch_idx': track_batch(torch.tensor([4, 5]))},
+]
+
+collated = collate(batch)
+# collated['events'] == tensor([1, 2, 3, 4, 5])
+# collated['batch_idx'] == tensor([0, 0, 0, 1, 1])  # tracks which sample each element came from
+```
+
+## Tracking Functions
+
+### track_mask
+
+```python
+torch_brain.data.track_mask(input)
+```
+
+Wrap an array or tensor to automatically track its padding mask. Creates a boolean mask indicating valid (non-padded) positions.
+
+<ParamField path="input" type="Union[Tensor, ndarray]" required>
+  Array or tensor to create a padding mask for.
+</ParamField>
+
+<ResponseField name="output" type="PaddedObject">
+  Boolean tensor of shape `(len(input),)` that will be padded alongside the input, with `True` for valid positions and `False` for padding.
+</ResponseField>
+
+**Example:**
+```python
+from torch_brain.data import pad, track_mask, collate
+import torch
+
+batch = [
+    {'data': pad(torch.randn(50, 10)), 'valid': track_mask(torch.randn(50, 10))},
+    {'data': pad(torch.randn(75, 10)), 'valid': track_mask(torch.randn(75, 10))},
+]
+
+collated = collate(batch)
+# collated['valid'][0] == [True]*50 + [False]*25
+# collated['valid'][1] == [True]*75
+```
+
+### track_mask8
+
+```python
+torch_brain.data.track_mask8(input)
+```
+
+Track padding mask for `pad8` wrapped objects. Used in conjunction with `pad8`.
+
+<ParamField path="input" type="Union[Tensor, ndarray]" required>
+  Array or tensor to create a padding mask for.
+</ParamField>
+
+<ResponseField name="output" type="Padded8Object">
+  Boolean tensor tracking valid positions when padded to multiple of 8.
+</ResponseField>
+
+### track_batch
+
+```python
+torch_brain.data.track_batch(input)
+```
+
+Wrap an array or tensor to track which batch element each item came from when using `chain`.
+
+<ParamField path="input" type="Union[Tensor, ndarray]" required>
+  Array or tensor to create batch indices for.
+</ParamField>
+
+<ResponseField name="output" type="ChainBatchTrackerObject">
+  Long tensor of shape `(len(input),)` containing batch indices (0, 1, 2, ...).
+</ResponseField>
+
+**Example:**
+```python
+from torch_brain.data import chain, track_batch, collate
+import torch
+
+batch = [
+    {'spikes': chain(torch.randn(100, 10)), 'batch': track_batch(torch.randn(100, 10))},
+    {'spikes': chain(torch.randn(150, 10)), 'batch': track_batch(torch.randn(150, 10))},
+]
+
+collated = collate(batch)
+# collated['spikes'].shape == (250, 10)
+# collated['batch'] == tensor([0]*100 + [1]*150)
+```
+
+## See Also
+
+- [Dataset](/api/dataset) - Dataset class for loading neural recordings
+- [Samplers](/api/samplers) - Sampling strategies for creating batches

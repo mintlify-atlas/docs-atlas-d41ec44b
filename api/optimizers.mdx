@@ -1,0 +1,276 @@
+---
+title: 'Optimizers'
+description: 'Custom optimization algorithms and learning rate schedules'
+---
+
+The `torch_brain.optim` module provides specialized optimizers for training neural network models on neural data.
+
+## SparseLamb
+
+```python
+torch_brain.optim.SparseLamb(
+    params,
+    lr: float = 1e-3,
+    betas: Tuple[float, float] = (0.9, 0.999),
+    eps: float = 1e-6,
+    weight_decay: float = 0,
+    clamp_value: float = 10,
+    adam: bool = False,
+    debias: bool = False,
+    sparse: bool = False
+)
+```
+
+Sparse variant of the LAMB (Layer-wise Adaptive Moments optimizer for Batch training) algorithm. This optimizer only updates parameters with non-zero gradients, making it efficient for models where not all parameters are used in every forward pass.
+
+### Parameters
+
+<ParamField path="params" type="iterable" required>
+  Iterable of parameters to optimize or parameter group dictionaries
+</ParamField>
+
+<ParamField path="lr" type="float" default="1e-3">
+  Learning rate
+</ParamField>
+
+<ParamField path="betas" type="Tuple[float, float]" default="(0.9, 0.999)">
+  Coefficients for computing running averages of gradient and its square. Both values must be in [0.0, 1.0).
+</ParamField>
+
+<ParamField path="eps" type="float" default="1e-6">
+  Term added to denominator for numerical stability
+</ParamField>
+
+<ParamField path="weight_decay" type="float" default="0">
+  Weight decay coefficient (L2 penalty)
+</ParamField>
+
+<ParamField path="clamp_value" type="float" default="10">
+  Clamp weight norm to range (0, clamp_value). Set to a high value (e.g., 10000) to effectively disable.
+</ParamField>
+
+<ParamField path="adam" type="bool" default="False">
+  If `True`, always use trust ratio = 1, which converts LAMB to Adam. Useful for ablation studies.
+</ParamField>
+
+<ParamField path="debias" type="bool" default="False">
+  If `True`, debias moment estimates by (1 - beta**step). Currently not implemented.
+</ParamField>
+
+<ParamField path="sparse" type="bool" default="False">
+  If `True`, only update parameters with non-zero gradients. This is the key feature differentiating SparseLamb from standard LAMB.
+</ParamField>
+
+### Methods
+
+#### step
+
+```python
+step(closure=None)
+```
+
+Performs a single optimization step.
+
+<ParamField path="closure" type="Callable" default="None">
+  Optional closure that reevaluates the model and returns the loss
+</ParamField>
+
+**Returns:** Loss value if closure is provided, otherwise `None`
+
+### Algorithm Overview
+
+SparseLamb implements the LAMB algorithm with optional sparse updates:
+
+1. **Compute moments**: Updates exponential moving averages of gradients and squared gradients
+2. **Apply weight decay**: Adds L2 regularization to the adaptive step
+3. **Compute trust ratio**: Scales learning rate based on ratio of parameter norm to update norm
+4. **Sparse masking** (if enabled): Only updates parameters where gradient magnitude exceeds threshold
+
+The trust ratio helps maintain training stability when scaling to large batch sizes.
+
+### Usage Examples
+
+<CodeGroup>
+```python Basic Usage
+import torch
+import torch_brain
+
+model = torch_brain.models.NDT3(
+    n_channels=96,
+    hidden_size=256,
+    n_heads=8,
+    n_layers=4
+)
+
+# Standard LAMB optimizer
+optimizer = torch_brain.optim.SparseLamb(
+    model.parameters(),
+    lr=1e-3,
+    weight_decay=0.01
+)
+
+# Training loop
+for batch in dataloader:
+    optimizer.zero_grad()
+    loss = compute_loss(model, batch)
+    loss.backward()
+    optimizer.step()
+```
+
+```python Sparse Mode
+import torch_brain
+
+# Enable sparse updates for efficient training
+# Only parameters with non-zero gradients are updated
+optimizer = torch_brain.optim.SparseLamb(
+    model.parameters(),
+    lr=1e-3,
+    weight_decay=0.01,
+    sparse=True  # Enable sparse updates
+)
+
+# Useful when using modality-specific decoders
+# where different decoders are active for different batches
+```
+
+```python Parameter Groups
+import torch_brain
+
+model = torch_brain.models.NDT3(...)
+
+# Different learning rates for different components
+optimizer = torch_brain.optim.SparseLamb([
+    {'params': model.encoder.parameters(), 'lr': 1e-3},
+    {'params': model.decoder.parameters(), 'lr': 5e-4},
+], weight_decay=0.01)
+```
+
+```python Adam Fallback
+import torch_brain
+
+# Use LAMB with trust_ratio=1 (equivalent to Adam)
+# Useful for comparing LAMB vs Adam
+optimizer = torch_brain.optim.SparseLamb(
+    model.parameters(),
+    lr=1e-3,
+    adam=True  # Forces trust ratio to 1
+)
+```
+</CodeGroup>
+
+### When to Use SparseLamb
+
+<Check>
+**Good for:**
+- Large batch training (LAMB's strength)
+- Models with modality-specific parameters that aren't always active
+- Multi-task learning with sparse task sampling
+- Training stability with adaptive learning rates
+</Check>
+
+<Warning>
+**Considerations:**
+- Sparse mode adds overhead for masking operations
+- Only beneficial when a significant fraction of parameters have zero gradients
+- Not compatible with sparse gradient tensors (raises RuntimeError)
+</Warning>
+
+### Comparison with Other Optimizers
+
+| Optimizer | Trust Ratio | Sparse Updates | Best For |
+|-----------|-------------|----------------|----------|
+| **SparseLamb** | Yes | Optional | Large batches, sparse models |
+| **LAMB** | Yes | No | Large batch training |
+| **Adam** | No | No | General purpose |
+| **AdamW** | No | No | General purpose with decoupled weight decay |
+
+### Advanced Configuration
+
+<CodeGroup>
+```python Custom Clipping
+import torch_brain
+
+# Adjust weight norm clipping threshold
+optimizer = torch_brain.optim.SparseLamb(
+    model.parameters(),
+    lr=1e-3,
+    clamp_value=50.0  # Higher threshold for less aggressive clipping
+)
+```
+
+```python Conservative Updates
+import torch_brain
+
+# More conservative momentum for noisy gradients
+optimizer = torch_brain.optim.SparseLamb(
+    model.parameters(),
+    lr=1e-3,
+    betas=(0.95, 0.999),  # Higher beta1 for more smoothing
+    eps=1e-5  # Larger epsilon for more stability
+)
+```
+
+```python With Learning Rate Scheduler
+import torch
+import torch_brain
+
+optimizer = torch_brain.optim.SparseLamb(
+    model.parameters(),
+    lr=1e-3
+)
+
+# Cosine annealing schedule
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    optimizer,
+    T_max=num_epochs,
+    eta_min=1e-5
+)
+
+for epoch in range(num_epochs):
+    for batch in dataloader:
+        optimizer.zero_grad()
+        loss = compute_loss(model, batch)
+        loss.backward()
+        optimizer.step()
+    scheduler.step()
+```
+</CodeGroup>
+
+### State Dictionary
+
+The optimizer maintains the following state for each parameter:
+
+- `step`: Number of optimization steps taken
+- `exp_avg`: Exponential moving average of gradients (first moment)
+- `exp_avg_sq`: Exponential moving average of squared gradients (second moment)
+- `weight_norm`: L2 norm of the parameter (for trust ratio)
+- `adam_norm`: L2 norm of the adaptive step (for trust ratio)
+- `trust_ratio`: Computed ratio of weight_norm to adam_norm
+
+<CodeGroup>
+```python Checkpointing
+import torch
+
+# Save optimizer state
+checkpoint = {
+    'model': model.state_dict(),
+    'optimizer': optimizer.state_dict(),
+    'epoch': epoch
+}
+torch.save(checkpoint, 'checkpoint.pt')
+
+# Load optimizer state
+checkpoint = torch.load('checkpoint.pt')
+optimizer.load_state_dict(checkpoint['optimizer'])
+```
+</CodeGroup>
+
+## References
+
+<Card title="LAMB Paper" icon="file-lines" href="https://arxiv.org/abs/1904.00962">
+  You, Y., Li, J., Reddi, S., Hseu, J., Kumar, S., Bhojanapalli, S., ... & Hsieh, C. J. (2019). Large Batch Optimization for Deep Learning: Training BERT in 76 minutes. arXiv preprint arXiv:1904.00962.
+</Card>
+
+<Note>
+Implementation reference: [pytorch-lamb](https://github.com/cybertronai/pytorch-lamb)
+</Note>

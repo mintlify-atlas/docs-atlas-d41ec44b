@@ -1,0 +1,101 @@
+---
+title: Models Overview
+description: Overview of neural decoding models available in torch_brain
+---
+
+torch_brain provides state-of-the-art transformer-based models for neural population decoding from electrophysiological and calcium imaging recordings.
+
+## Available Models
+
+### POYO
+
+**A Unified, Scalable Framework for Neural Population Decoding**
+
+- Single-task neural decoding model
+- Published at NeurIPS 2023
+- Works with spike train data from electrophysiology recordings
+- Best for single-task decoding scenarios (e.g., velocity prediction)
+
+[Learn more about POYO](/models/poyo)
+
+### POYO+
+
+**Multi-Session, Multi-Task Neural Decoding**
+
+- Multi-task extension of POYO
+- Published at ICLR 2025
+- Works with spike train data from electrophysiology recordings
+- Supports multiple prediction tasks simultaneously
+- Task-specific readout layers with shared encoder
+
+[Learn more about POYO+](/models/poyo-plus)
+
+### CaPOYO
+
+**Calcium POYO+ for Imaging Data**
+
+- Specialized version of POYO+ for calcium imaging
+- Published at ICLR 2025
+- Works with calcium fluorescence traces (dF/F)
+- Includes calcium value mapping layer
+- Supports multi-task learning on imaging data
+
+[Learn more about CaPOYO](/models/capoyo)
+
+## Model Comparison
+
+| Feature | POYO | POYO+ | CaPOYO |
+|---------|------|-------|--------|
+| **Input Type** | Spike trains | Spike trains | Calcium traces |
+| **Multi-task** | ✗ | ✓ | ✓ |
+| **Multi-session** | ✓ | ✓ | ✓ |
+| **Paper** | NeurIPS 2023 | ICLR 2025 | ICLR 2025 |
+| **Value Mapping** | ✗ | ✗ | ✓ |
+| **Task Embeddings** | ✗ | ✓ | ✓ |
+
+## When to Use Each Model
+
+### Use POYO when:
+- You have electrophysiology spike data
+- You need to decode a single behavioral or cognitive variable
+- You want a simpler, proven architecture
+- You're working with single or multiple recording sessions of the same task
+
+### Use POYO+ when:
+- You have electrophysiology spike data
+- You need to predict multiple behavioral/cognitive variables simultaneously
+- You want to leverage shared representations across tasks
+- You're training across different experimental sessions and tasks
+
+### Use CaPOYO when:
+- You have calcium imaging data (dF/F traces)
+- You need multi-task predictions from imaging recordings
+- You're working with data like the Allen Visual Coding dataset
+- You want to decode from fluorescence time series
+
+## Architecture Overview
+
+All three models share a common encoder-processor-decoder architecture:
+
+1. **Encoder**: Compresses input sequences (spikes or calcium traces) into latent representations using cross-attention
+2. **Processor**: Refines latent representations through multiple self-attention layers
+3. **Decoder**: Produces task-specific outputs via cross-attention and readout layers
+
+### Key Components
+
+- **Rotary Position Embeddings**: Time-aware attention mechanism for temporal data
+- **Infinite Vocabulary Embeddings**: Handle arbitrary numbers of neurons and sessions
+- **Latent Compression**: Efficient representation of neural activity
+- **Task-Specific Readouts**: Dedicated output layers for different prediction tasks (POYO+, CaPOYO)
+
+## Getting Started
+
+To use any of these models:
+
+1. Install torch_brain: `pip install torch_brain`
+2. Prepare your data using the appropriate dataset format
+3. Initialize the model with your configuration
+4. Initialize vocabularies for units and sessions
+5. Train using PyTorch Lightning or custom training loops
+
+See individual model pages for detailed usage examples and parameter documentation.

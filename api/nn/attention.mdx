@@ -1,0 +1,499 @@
+---
+title: Attention Mechanisms
+description: Rotary attention layers with positional embeddings
+---
+
+## RotarySelfAttention
+
+Self-attention layer with rotary positional embeddings. Performs self-attention within a sequence, applying rotary positional embeddings to queries and keys (and optionally values).
+
+### Class Signature
+
+```python
+class RotarySelfAttention(nn.Module):
+    def __init__(
+        self,
+        *,
+        dim: int,
+        heads: int = 8,
+        dim_head: int = 64,
+        dropout: float = 0.0,
+        rotate_value: bool = False,
+    )
+```
+
+### Parameters
+
+<ParamField path="dim" type="int" required>
+  Dimension of input embeddings
+</ParamField>
+
+<ParamField path="heads" type="int" default="8">
+  Number of attention heads
+</ParamField>
+
+<ParamField path="dim_head" type="int" default="64">
+  Dimension of each attention head
+</ParamField>
+
+<ParamField path="dropout" type="float" default="0.0">
+  Dropout probability applied during attention
+</ParamField>
+
+<ParamField path="rotate_value" type="bool" default="False">
+  Whether to apply rotary embeddings to values in addition to queries and keys
+</ParamField>
+
+### Forward Methods
+
+#### forward()
+
+```python
+def forward(
+    self,
+    x: Tensor,
+    rotary_time_emb: Tensor,
+    x_mask: Optional[Tensor] = None,
+) -> Tensor
+```
+
+Forward pass for fixed-length or padded sequences.
+
+<ParamField path="x" type="Tensor" required>
+  Input tensor of shape `(B, N, D)` where B is batch size, N is sequence length, D is input dimension
+</ParamField>
+
+<ParamField path="rotary_time_emb" type="Tensor" required>
+  Rotary positional embeddings of shape `(B, N, D_h)` where D_h is head dimension
+</ParamField>
+
+<ParamField path="x_mask" type="Optional[Tensor]">
+  Attention mask of shape `(B, N, N)`. Optional.
+</ParamField>
+
+**Returns:** Output tensor of shape `(B, N, D)`
+
+#### forward_varlen()
+
+```python
+def forward_varlen(
+    self,
+    x: Tensor,
+    rotary_time_emb: Tensor,
+    x_seqlen: Tensor,
+) -> Tensor
+```
+
+Forward pass for variable-length sequences that are chained together. More memory efficient as it avoids padding.
+
+<ParamField path="x" type="Tensor" required>
+  Input tensor of shape `(N_total, D)` where N_total is the total sequence length across the batch
+</ParamField>
+
+<ParamField path="rotary_time_emb" type="Tensor" required>
+  Rotary positional embeddings of shape `(N_total, D_h)`
+</ParamField>
+
+<ParamField path="x_seqlen" type="Tensor" required>
+  Sequence lengths of shape `(B,)` where B is batch size
+</ParamField>
+
+**Returns:** Output tensor of shape `(N_total, D)`
+
+<Note>
+  `forward_varlen()` requires xformers to be installed and only works on CUDA devices.
+</Note>
+
+### Usage Example
+
+```python
+from torch_brain.nn import RotarySelfAttention, RotaryTimeEmbedding
+import torch
+
+# Initialize attention layer
+attn = RotarySelfAttention(
+    dim=256,
+    heads=8,
+    dim_head=64,
+    dropout=0.1
+)
+
+# Create positional embedding layer
+pos_emb = RotaryTimeEmbedding(
+    head_dim=64,
+    rotate_dim=64,
+    t_min=0.01,
+    t_max=1000.0
+)
+
+# Create input and timestamps
+batch_size, seq_len, dim = 2, 100, 256
+x = torch.randn(batch_size, seq_len, dim)
+timestamps = torch.linspace(0, 10, seq_len).unsqueeze(0).expand(batch_size, -1)
+
+# Compute rotary embeddings
+rotary_emb = pos_emb(timestamps)  # (B, N, D_h)
+
+# Apply attention
+output = attn(x, rotary_emb)  # (B, N, D)
+print(output.shape)  # torch.Size([2, 100, 256])
+```
+
+---
+
+## RotaryCrossAttention
+
+Cross-attention layer with rotary positional embeddings. Performs cross-attention between a query sequence and a context sequence.
+
+### Class Signature
+
+```python
+class RotaryCrossAttention(nn.Module):
+    def __init__(
+        self,
+        *,
+        dim: int,
+        context_dim: Optional[int] = None,
+        heads: int = 8,
+        dim_head: int = 64,
+        dropout: float = 0.0,
+        rotate_value: bool = False,
+    )
+```
+
+### Parameters
+
+<ParamField path="dim" type="int" required>
+  Dimension of input query embeddings
+</ParamField>
+
+<ParamField path="context_dim" type="Optional[int]">
+  Dimension of input context embeddings. If None, uses the same as `dim`
+</ParamField>
+
+<ParamField path="heads" type="int" default="8">
+  Number of attention heads
+</ParamField>
+
+<ParamField path="dim_head" type="int" default="64">
+  Dimension of each attention head
+</ParamField>
+
+<ParamField path="dropout" type="float" default="0.0">
+  Dropout probability applied during attention
+</ParamField>
+
+<ParamField path="rotate_value" type="bool" default="False">
+  Whether to apply rotary embeddings to values in addition to queries and keys
+</ParamField>
+
+### Forward Methods
+
+#### forward()
+
+```python
+def forward(
+    self,
+    x_query: Tensor,
+    x_context: Tensor,
+    query_pos_emb: Tensor,
+    context_pos_emb: Tensor,
+    context_mask: Optional[Tensor] = None,
+) -> Tensor
+```
+
+Forward pass for fixed-length or padded sequences.
+
+<ParamField path="x_query" type="Tensor" required>
+  Query tensor of shape `(B, N_q, D_q)` where N_q is query sequence length
+</ParamField>
+
+<ParamField path="x_context" type="Tensor" required>
+  Context tensor of shape `(B, N_c, D_c)` where N_c is context sequence length
+</ParamField>
+
+<ParamField path="query_pos_emb" type="Tensor" required>
+  Query positional embeddings of shape `(B, N_q, D_h)`
+</ParamField>
+
+<ParamField path="context_pos_emb" type="Tensor" required>
+  Context positional embeddings of shape `(B, N_c, D_h)`
+</ParamField>
+
+<ParamField path="context_mask" type="Optional[Tensor]">
+  Context mask of shape `(B, N_c)`. Optional.
+</ParamField>
+
+**Returns:** Output tensor of shape `(B, N_q, D)`
+
+#### forward_varlen()
+
+```python
+def forward_varlen(
+    self,
+    x_query: Tensor,
+    x_context: Tensor,
+    query_pos_emb: Tensor,
+    context_pos_emb: Tensor,
+    query_seqlen: Tensor,
+    context_seqlen: Tensor,
+) -> Tensor
+```
+
+Forward pass for variable-length sequences.
+
+<ParamField path="x_query" type="Tensor" required>
+  Query tensor of shape `(N_q_total, D)` where N_q_total is total query sequence length
+</ParamField>
+
+<ParamField path="x_context" type="Tensor" required>
+  Context tensor of shape `(N_c_total, D_c)` where N_c_total is total context sequence length
+</ParamField>
+
+<ParamField path="query_pos_emb" type="Tensor" required>
+  Query positional embeddings of shape `(N_q_total, D_h)`
+</ParamField>
+
+<ParamField path="context_pos_emb" type="Tensor" required>
+  Context positional embeddings of shape `(N_c_total, D_h)`
+</ParamField>
+
+<ParamField path="query_seqlen" type="Tensor" required>
+  Query sequence lengths of shape `(B,)`
+</ParamField>
+
+<ParamField path="context_seqlen" type="Tensor" required>
+  Context sequence lengths of shape `(B,)`
+</ParamField>
+
+**Returns:** Output tensor of shape `(N_q_total, D)`
+
+### Usage Example
+
+```python
+from torch_brain.nn import RotaryCrossAttention, RotaryTimeEmbedding
+import torch
+
+# Initialize cross-attention layer
+cross_attn = RotaryCrossAttention(
+    dim=256,
+    context_dim=512,
+    heads=8,
+    dim_head=64
+)
+
+# Create positional embedding layer
+pos_emb = RotaryTimeEmbedding(
+    head_dim=64,
+    rotate_dim=64,
+    t_min=0.01,
+    t_max=1000.0
+)
+
+# Create query and context
+batch_size = 2
+query = torch.randn(batch_size, 50, 256)  # 50 query tokens
+context = torch.randn(batch_size, 100, 512)  # 100 context tokens
+
+# Create timestamps for query and context
+query_times = torch.linspace(0, 5, 50).unsqueeze(0).expand(batch_size, -1)
+context_times = torch.linspace(0, 10, 100).unsqueeze(0).expand(batch_size, -1)
+
+# Compute rotary embeddings
+query_pos_emb = pos_emb(query_times)
+context_pos_emb = pos_emb(context_times)
+
+# Apply cross-attention
+output = cross_attn(
+    x_query=query,
+    x_context=context,
+    query_pos_emb=query_pos_emb,
+    context_pos_emb=context_pos_emb
+)
+print(output.shape)  # torch.Size([2, 50, 256])
+```
+
+---
+
+## Position Embeddings
+
+### RotaryTimeEmbedding
+
+Rotary positional embedding layer designed for use with rotary attention mechanisms. Based on [RoFormer: Enhanced Transformer with Rotary Position Embedding](https://arxiv.org/abs/2104.09864).
+
+#### Class Signature
+
+```python
+class RotaryTimeEmbedding(nn.Module):
+    def __init__(
+        self,
+        head_dim: int,
+        rotate_dim: int,
+        t_min: float,
+        t_max: float
+    )
+```
+
+#### Parameters
+
+<ParamField path="head_dim" type="int" required>
+  Dimension of the attention head
+</ParamField>
+
+<ParamField path="rotate_dim" type="int" required>
+  Number of dimensions to rotate. Must be even and ≤ head_dim. You can rotate only a portion of the head dimension (e.g., PerceiverIO found rotating only half to be effective).
+</ParamField>
+
+<ParamField path="t_min" type="float" required>
+  Minimum period of the sinusoids. Set this to the smallest timescale the attention layer should care about.
+</ParamField>
+
+<ParamField path="t_max" type="float" required>
+  Maximum period of the sinusoids. Set this to the largest timescale the attention layer should care about.
+</ParamField>
+
+#### Forward Method
+
+```python
+def forward(self, timestamps: Tensor) -> Tensor
+```
+
+Computes rotary embeddings for given timestamps.
+
+**Returns:** Rotary embeddings that can be used with `rotate()` static method
+
+#### Static Methods
+
+```python
+@staticmethod
+def rotate(x: Tensor, rotary_emb: Tensor, unsqueeze_dim: int = 2) -> Tensor
+```
+
+Apply rotary positional embedding to input data.
+
+<ParamField path="x" type="Tensor" required>
+  Input data
+</ParamField>
+
+<ParamField path="rotary_emb" type="Tensor" required>
+  Rotary embedding from forward call
+</ParamField>
+
+<ParamField path="unsqueeze_dim" type="int" default="2">
+  Dimension where heads are located. Use 1 for shape `(batch, heads, seq_len, dim)`, use 2 for shape `(batch, seq_len, heads, dim)`.
+</ParamField>
+
+```python
+@staticmethod
+def invert(rotary_emb: Tensor) -> Tensor
+```
+
+Invert rotary embedding. If input corresponds to time $t$, output corresponds to time $-t$.
+
+#### Usage Example
+
+```python
+from torch_brain.nn import RotaryTimeEmbedding
+import torch
+
+# Create rotary embedding layer
+rotary_emb = RotaryTimeEmbedding(
+    head_dim=64,
+    rotate_dim=64,  # Rotate all dimensions
+    t_min=0.01,
+    t_max=1000.0
+)
+
+# Create timestamps
+timestamps = torch.linspace(0, 10, 100).unsqueeze(0)  # (1, 100)
+
+# Compute rotary embeddings
+emb = rotary_emb(timestamps)  # (1, 100, 64)
+
+# Apply to some data (example with shape B, H, N, D)
+data = torch.randn(2, 8, 100, 64)  # batch=2, heads=8, seq=100, dim=64
+rotated = RotaryTimeEmbedding.rotate(data, emb, unsqueeze_dim=1)
+print(rotated.shape)  # torch.Size([2, 8, 100, 64])
+```
+
+---
+
+### SinusoidalTimeEmbedding
+
+Sinusoidal time/position embedding layer. These embeddings are typically added or concatenated to tokens to provide temporal/positional information.
+
+#### Class Signature
+
+```python
+class SinusoidalTimeEmbedding(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        t_min: float,
+        t_max: float
+    )
+```
+
+#### Parameters
+
+<ParamField path="dim" type="int" required>
+  Dimension of the embedding (must be a multiple of 2)
+</ParamField>
+
+<ParamField path="t_min" type="float" required>
+  Minimum period of the sinusoids
+</ParamField>
+
+<ParamField path="t_max" type="float" required>
+  Maximum period of the sinusoids
+</ParamField>
+
+#### Forward Method
+
+```python
+def forward(self, timestamps: Tensor) -> Tensor
+```
+
+Convert raw timestamps to sinusoidal embeddings.
+
+**Shape:**
+- Input: `(*)` - Timestamps of any shape
+- Output: `(*, dim)` - Sinusoidal embeddings
+
+#### Mathematical Formulation
+
+The embeddings are computed as:
+
+$$
+\text{emb}[\ldots, 2i] = \sin(\omega_i \cdot t)
+$$
+
+$$
+\text{emb}[\ldots, 2i+1] = \cos(\omega_i \cdot t)
+$$
+
+where $\omega_i = 2\pi / T_i$ and $T_i$ are periods logarithmically spaced between `t_min` and `t_max`.
+
+#### Usage Example
+
+```python
+from torch_brain.nn import SinusoidalTimeEmbedding
+import torch
+
+# Create sinusoidal embedding layer
+sin_emb = SinusoidalTimeEmbedding(
+    dim=128,
+    t_min=0.01,
+    t_max=1000.0
+)
+
+# Create timestamps
+timestamps = torch.linspace(0, 10, 100)  # (100,)
+
+# Compute embeddings
+emb = sin_emb(timestamps)  # (100, 128)
+
+# Can add to token embeddings
+tokens = torch.randn(100, 128)
+tokens_with_pos = tokens + emb
+```

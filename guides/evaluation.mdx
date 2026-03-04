@@ -1,0 +1,728 @@
+---
+title: Evaluating Model Performance
+description: Comprehensive guide to evaluating POYO models with metrics, stitching, and analysis
+---
+
+## Overview
+
+This guide covers how to evaluate trained models using torch_brain's evaluation framework. You'll learn about validation metrics, stitching evaluators, and performance analysis.
+
+## Evaluation Framework
+
+### Validation vs. Testing
+
+torch_brain uses PyTorch Lightning's built-in validation and testing:
+
+- **Validation**: Performed during training to monitor progress and select best checkpoints
+- **Testing**: Final evaluation on held-out test data
+
+```python
+# During training
+trainer.fit(wrapper, data_module, ckpt_path=cfg.ckpt_path)
+
+# Test on best checkpoint
+trainer.test(wrapper, data_module, ckpt_path="best", weights_only=False)
+```
+
+From `examples/poyo/train.py:349-352`.
+
+## Stitch Evaluators
+
+### What is Stitching?
+
+Neural decoders process data in fixed-length windows. Stitching combines overlapping windows to produce continuous predictions:
+
+```python
+# Validation sampler with 50% overlap
+val_sampler = DistributedStitchingFixedWindowSampler(
+    sampling_intervals=dataset.get_sampling_intervals("valid"),
+    window_length=sequence_length,  # e.g., 1.0 second
+    step=sequence_length / 2,        # 0.5 second step = 50% overlap
+    batch_size=batch_size,
+    num_replicas=trainer.world_size,
+    rank=trainer.global_rank,
+)
+```
+
+From `examples/poyo/train.py:230-238`.
+
+<Info>
+  Overlapping windows improve prediction quality at window boundaries by averaging predictions from multiple contexts.
+</Info>
+
+### DecodingStitchEvaluator (Single-Task)
+
+For POYO models with a single readout task:
+
+```python
+from torch_brain.utils.stitcher import DecodingStitchEvaluator
+
+stitch_evaluator = DecodingStitchEvaluator(
+    session_ids=data_module.get_session_ids(),
+    modality_spec=readout_spec,
+)
+
+callbacks = [
+    stitch_evaluator,
+    # ... other callbacks
+]
+
+trainer = L.Trainer(
+    callbacks=callbacks,
+    # ... other args
+)
+```
+
+From `examples/poyo/train.py:312-318`.
+
+### MultiTaskDecodingStitchEvaluator (POYO+)
+
+For POYO+ models with multiple readout tasks:
+
+```python
+from torch_brain.utils.stitcher import MultiTaskDecodingStitchEvaluator
+
+evaluator = MultiTaskDecodingStitchEvaluator(
+    metrics=data_module.get_metrics()
+)
+
+callbacks = [evaluator, ...]
+```
+
+From `examples/poyo_plus/train.py:368-371`.
+
+### How Stitching Works
+
+<Steps>
+  <Step title="Cache predictions">
+    During validation, the evaluator caches predictions from overlapping windows:
+    ```python
+    def validation_step(self, batch, batch_idx):
+        output_values = self.model(**batch["model_inputs"])
+        
+        # Prepare data for evaluator
+        data_for_eval = DataForDecodingStitchEvaluator(
+            timestamps=batch["model_inputs"]["output_timestamps"],
+            preds=output_values,
+            targets=batch["target_values"],
+            eval_masks=batch["eval_mask"],
+            session_ids=batch["session_id"],
+            absolute_starts=batch["absolute_start"],
+        )
+        return data_for_eval
+    ```
+    From `examples/poyo/train.py:123-139`.
+  </Step>
+
+  <Step title="Align windows">
+    The evaluator tracks which windows belong to each sequence and aligns them temporally.
+  </Step>
+
+  <Step title="Average overlaps">
+    Overlapping predictions are averaged to produce smooth continuous outputs.
+  </Step>
+
+  <Step title="Compute metrics">
+    Metrics are computed on the stitched predictions within evaluation intervals.
+  </Step>
+</Steps>
+
+## Metrics
+
+### Configuring Metrics
+
+Metrics are defined in your dataset configuration:
+
+```python
+READOUT_CONFIG = {
+    "readout": {
+        "readout_id": "cursor_velocity_2d",
+        "metrics": [
+            {"metric": torchmetrics.R2Score()},
+            {"metric": torchmetrics.MeanSquaredError()},
+            {"metric": torchmetrics.PearsonCorrCoef()},
+        ],
+        "eval_interval": "movement_phases.reach_period",
+    }
+}
+```
+
+From `examples/poyo/datasets/poyo_mp.py:8-23`.
+
+### Available Metrics
+
+Common metrics for neural decoding:
+
+<ResponseField name="R2Score" type="torchmetrics.R2Score">
+  Coefficient of determination. Primary metric for continuous variables.
+  - **Range**: (-∞, 1.0]
+  - **Best**: 1.0 (perfect predictions)
+  - **Use for**: Velocity, position, continuous signals
+</ResponseField>
+
+<ResponseField name="MeanSquaredError" type="torchmetrics.MeanSquaredError">
+  Mean squared error between predictions and targets.
+  - **Range**: [0, ∞)
+  - **Best**: 0.0
+  - **Use for**: Regression tasks, comparing models
+</ResponseField>
+
+<ResponseField name="PearsonCorrCoef" type="torchmetrics.PearsonCorrCoef">
+  Pearson correlation coefficient.
+  - **Range**: [-1, 1]
+  - **Best**: 1.0 (perfect positive correlation)
+  - **Use for**: Assessing linear relationships
+</ResponseField>
+
+<ResponseField name="Accuracy" type="torchmetrics.Accuracy">
+  Classification accuracy.
+  - **Range**: [0, 1]
+  - **Best**: 1.0
+  - **Use for**: Discrete decoding tasks (directions, object IDs)
+  ```python
+  {"metric": torchmetrics.Accuracy(task="multiclass", num_classes=8)}
+  ```
+</ResponseField>
+
+<ResponseField name="F1Score" type="torchmetrics.F1Score">
+  F1 score for classification.
+  - **Range**: [0, 1]
+  - **Best**: 1.0
+  - **Use for**: Imbalanced classification tasks
+  ```python
+  {"metric": torchmetrics.F1Score(task="multiclass", num_classes=8)}
+  ```
+</ResponseField>
+
+### Multi-Task Metrics
+
+For POYO+, define metrics per task:
+
+```python
+def get_metrics(self):
+    """Get metrics for each session and task."""
+    dataset_config_dict = self.get_recording_config_dict()
+    metrics = defaultdict(lambda: defaultdict(dict))
+    
+    for recording_id, recording_config in dataset_config_dict.items():
+        for readout_config in recording_config["multitask_readout"]:
+            readout_id = readout_config["readout_id"]
+            for metric_config in readout_config["metrics"]:
+                metric = hydra.utils.instantiate(metric_config["metric"])
+                metrics[recording_id][readout_id][str(metric)] = metric
+    
+    return metrics
+```
+
+From `examples/poyo_plus/train.py:250-260`.
+
+## Evaluation Intervals
+
+### Why Use Evaluation Intervals?
+
+Not all time periods are equally informative. Evaluation intervals focus metrics on task-relevant periods:
+
+```python
+"eval_interval": "movement_phases.reach_period"
+```
+
+This evaluates only during reaching movements, ignoring:
+- Hold periods (no movement)
+- Inter-trial intervals
+- Invalid or corrupted segments
+
+### Defining Custom Intervals
+
+Add interval attributes to your Data objects:
+
+```python
+from temporaldata import Data, Interval
+
+# Define task phases
+reaching_intervals = Interval.from_list([
+    Interval(10.0, 12.5),
+    Interval(15.0, 17.3),
+    Interval(20.1, 22.8),
+    # ...
+])
+
+data = Data(
+    # ... other attributes
+    movement_phases=TabularData(
+        reach_period=reaching_intervals,
+        hold_period=hold_intervals,
+    ),
+)
+```
+
+### Evaluation Interval in Action
+
+```python
+# Only predictions within eval_interval are used for metrics
+eval_mask = batch["eval_mask"]  # Boolean mask for eval intervals
+
+data_for_eval = DataForDecodingStitchEvaluator(
+    timestamps=timestamps,
+    preds=predictions,
+    targets=targets,
+    eval_masks=eval_mask,  # Applied during metric computation
+    session_ids=session_ids,
+    absolute_starts=absolute_starts,
+)
+```
+
+## Loss Weights vs. Eval Intervals
+
+### Loss Weights (Training)
+
+Control what the model learns during training:
+
+```python
+"weights": {
+    "movement_phases.reach_period": 5.0,   # High weight - learn this well
+    "movement_phases.hold_period": 0.1,    # Low weight - less important
+    "cursor_outlier_segments": 0.0,        # Zero weight - ignore completely
+}
+```
+
+### Eval Intervals (Validation)
+
+Control where metrics are computed:
+
+```python
+"eval_interval": "movement_phases.reach_period"
+```
+
+<Note>
+  You can train on broader intervals but evaluate on narrower, task-specific intervals. This encourages the model to learn general features while being assessed on what matters most.
+</Note>
+
+## Validation Step Implementation
+
+### Single-Task Validation
+
+```python
+def validation_step(self, batch, batch_idx):
+    # Forward pass
+    output_values = self.model(**batch["model_inputs"])
+    
+    # Prepare data for evaluator
+    data_for_eval = DataForDecodingStitchEvaluator(
+        timestamps=batch["model_inputs"]["output_timestamps"],
+        preds=output_values,
+        targets=batch["target_values"],
+        eval_masks=batch["eval_mask"],
+        session_ids=batch["session_id"],
+        absolute_starts=batch["absolute_start"],
+    )
+    
+    return data_for_eval
+
+def test_step(self, batch, batch_idx):
+    return self.validation_step(batch, batch_idx)
+```
+
+From `examples/poyo/train.py:123-142`.
+
+### Multi-Task Validation
+
+```python
+def validation_step(self, batch, batch_idx):
+    # Forward pass with unpacked output
+    output_values = self.model(**batch["model_inputs"], unpack_output=True)
+    
+    # Prepare data for multi-task evaluator
+    data_for_eval = DataForMultiTaskDecodingStitchEvaluator(
+        timestamps=batch["model_inputs"]["output_timestamps"],
+        preds=output_values,
+        targets=batch["target_values"],
+        decoder_indices=batch["model_inputs"]["output_decoder_index"],
+        eval_masks=batch["eval_mask"],
+        session_ids=batch["session_id"],
+        absolute_starts=batch["absolute_start"],
+    )
+    
+    return data_for_eval
+```
+
+From `examples/poyo_plus/train.py:148-165`.
+
+## Logged Metrics
+
+### Metric Naming Convention
+
+During validation, metrics are logged with the following structure:
+
+**Single-task**:
+```
+average_val_metric        # Average across all sessions
+val_metric/{session_id}   # Per-session metrics
+```
+
+**Multi-task**:
+```
+average_val_metric                          # Average across tasks/sessions
+val_metric/{session_id}/{readout_id}        # Per-session, per-task
+losses/{readout_id}                         # Training losses per task
+```
+
+### Monitoring in WandB
+
+If WandB logging is enabled:
+
+```python
+wandb_logger = L.pytorch.loggers.WandbLogger(
+    save_dir=cfg.log_dir,
+    entity=cfg.wandb.entity,
+    name=cfg.wandb.run_name,
+    project=cfg.wandb.project,
+    log_model=cfg.wandb.log_model,
+)
+
+trainer = L.Trainer(
+    logger=wandb_logger,
+    # ...
+)
+```
+
+From `examples/poyo/train.py:288-296`.
+
+Metrics appear in WandB dashboard automatically.
+
+## Checkpointing Based on Metrics
+
+### ModelCheckpoint Configuration
+
+Save the best model based on validation performance:
+
+```python
+from lightning.pytorch.callbacks import ModelCheckpoint
+
+checkpoint_callback = ModelCheckpoint(
+    save_last=True,                    # Always save last epoch
+    monitor="average_val_metric",      # Metric to monitor
+    mode="max",                        # Higher is better
+    save_on_train_epoch_end=True,     # Save after training epoch
+    every_n_epochs=cfg.eval_epochs,   # Checkpoint frequency
+)
+```
+
+From `examples/poyo/train.py:320-326`.
+
+<ParamField path="monitor" type="string">
+  Metric to track for best checkpoint. Use:
+  - `average_val_metric` for overall performance
+  - `val_metric/{specific_session}` for session-specific
+  - `train_loss` if validation is slow
+</ParamField>
+
+<ParamField path="mode" type="string">
+  - `max`: Higher metric is better (R2, accuracy)
+  - `min`: Lower metric is better (MSE, loss)
+</ParamField>
+
+## Testing Workflow
+
+### Running Final Evaluation
+
+<Steps>
+  <Step title="Train model">
+    ```python
+    trainer.fit(wrapper, data_module, ckpt_path=cfg.ckpt_path)
+    ```
+  </Step>
+
+  <Step title="Load best checkpoint">
+    ```python
+    # Automatically loads best checkpoint based on monitor metric
+    trainer.test(
+        wrapper, 
+        data_module, 
+        ckpt_path="best",
+        weights_only=False,
+    )
+    ```
+  </Step>
+
+  <Step title="Analyze results">
+    Test metrics are logged to WandB and console:
+    ```
+    test_metric/session_001: 0.82
+    test_metric/session_002: 0.79
+    average_test_metric: 0.805
+    ```
+  </Step>
+</Steps>
+
+### Test-Only Mode
+
+Evaluate a trained checkpoint without training:
+
+```python
+# Load checkpoint
+wrapper = TrainWrapper.load_from_checkpoint(
+    checkpoint_path="path/to/checkpoint.ckpt",
+    cfg=cfg,
+    model=model,
+    modality_spec=readout_spec,
+)
+
+# Test only
+trainer.test(wrapper, data_module)
+```
+
+## Custom Metrics
+
+### Implementing Custom Metrics
+
+Create custom torchmetrics for specialized evaluation:
+
+```python
+import torchmetrics
+import torch
+
+class VelocityAngleError(torchmetrics.Metric):
+    """Angular error for 2D velocity predictions."""
+    
+    def __init__(self):
+        super().__init__()
+        self.add_state("angle_errors", default=torch.tensor(0.0), dist_reduce_fx="sum")
+        self.add_state("total", default=torch.tensor(0), dist_reduce_fx="sum")
+    
+    def update(self, preds: torch.Tensor, target: torch.Tensor):
+        """Update state with batch of predictions and targets.
+        
+        Args:
+            preds: (N, 2) predicted velocities
+            target: (N, 2) target velocities
+        """
+        # Compute angles
+        pred_angles = torch.atan2(preds[:, 1], preds[:, 0])
+        target_angles = torch.atan2(target[:, 1], target[:, 0])
+        
+        # Angular difference
+        angle_diff = torch.abs(pred_angles - target_angles)
+        angle_diff = torch.minimum(angle_diff, 2 * torch.pi - angle_diff)
+        
+        self.angle_errors += angle_diff.sum()
+        self.total += preds.shape[0]
+    
+    def compute(self):
+        """Compute final metric."""
+        return self.angle_errors / self.total
+
+# Use in config
+"metrics": [
+    {"metric": VelocityAngleError()},
+    {"metric": torchmetrics.R2Score()},
+]
+```
+
+### Per-Dimension Metrics
+
+For multi-dimensional outputs, compute metrics per dimension:
+
+```python
+class PerDimensionR2(torchmetrics.Metric):
+    """R2 score computed separately for each dimension."""
+    
+    def __init__(self, num_dims: int):
+        super().__init__()
+        self.num_dims = num_dims
+        self.r2_metrics = torch.nn.ModuleList([
+            torchmetrics.R2Score() for _ in range(num_dims)
+        ])
+    
+    def update(self, preds: torch.Tensor, target: torch.Tensor):
+        for i in range(self.num_dims):
+            self.r2_metrics[i].update(preds[:, i], target[:, i])
+    
+    def compute(self):
+        return torch.stack([m.compute() for m in self.r2_metrics])
+
+# Returns [R2_dim0, R2_dim1, ...]
+```
+
+## Performance Analysis
+
+### Session-Level Analysis
+
+Analyze performance across sessions:
+
+```python
+import pandas as pd
+import wandb
+
+# Download metrics from WandB
+api = wandb.Api()
+run = api.run(f"{entity}/{project}/{run_id}")
+
+# Get validation metrics
+history = run.history()
+val_metrics = history[[col for col in history.columns if 'val_metric' in col]]
+
+# Session-level performance
+session_perf = {}
+for col in val_metrics.columns:
+    if col.startswith('val_metric/') and col != 'val_metric':
+        session_id = col.replace('val_metric/', '')
+        session_perf[session_id] = val_metrics[col].dropna().iloc[-1]
+
+# Sort by performance
+df = pd.DataFrame.from_dict(session_perf, orient='index', columns=['R2'])
+df = df.sort_values('R2', ascending=False)
+
+print("Top 5 sessions:")
+print(df.head())
+
+print("\nBottom 5 sessions:")
+print(df.tail())
+```
+
+### Learning Curves
+
+Visualize training progress:
+
+```python
+import matplotlib.pyplot as plt
+
+# Plot training and validation
+fig, ax = plt.subplots(1, 2, figsize=(12, 4))
+
+ax[0].plot(history['train_loss'].dropna())
+ax[0].set_xlabel('Step')
+ax[0].set_ylabel('Loss')
+ax[0].set_title('Training Loss')
+
+ax[1].plot(history['average_val_metric'].dropna())
+ax[1].set_xlabel('Epoch')
+ax[1].set_ylabel('R2 Score')
+ax[1].set_title('Validation Performance')
+
+plt.tight_layout()
+plt.savefig('learning_curves.png')
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Metrics not logging">
+    **Check**:
+    - Metrics are defined in dataset config
+    - Evaluator callback is included: `callbacks=[stitch_evaluator, ...]`
+    - `eval_interval` attribute exists in your data
+    - Validation steps are running: check `check_val_every_n_epoch`
+  </Accordion>
+
+  <Accordion title="Validation is slow">
+    **Solutions**:
+    - Reduce validation frequency: `check_val_every_n_epoch=5`
+    - Limit validation batches during development:
+      ```python
+      trainer = L.Trainer(
+          limit_val_batches=100,  # Only first 100 batches
+      )
+      ```
+    - Use smaller `eval_batch_size`
+    - Reduce number of metrics
+  </Accordion>
+
+  <Accordion title="Stitching errors">
+    **Common issues**:
+    - Mismatched sequence indices in sampler
+    - Incorrect `absolute_start` values
+    - Missing timestamps in batch
+    
+    **Debug**:
+    - Set `num_sanity_val_steps=2` to test validation before training
+    - Check sampler output:
+      ```python
+      print(f"Val sampler: {len(val_sampler)} steps")
+      print(f"Sequence index: {val_sampler.sequence_index}")
+      ```
+  </Accordion>
+
+  <Accordion title="R2 score is negative">
+    **Interpretation**:
+    - R2 < 0 means model is worse than predicting the mean
+    - Not necessarily a bug, indicates poor performance
+    
+    **Solutions**:
+    - Check data normalization
+    - Verify loss weights are reasonable
+    - Increase model capacity or training time
+    - Inspect predictions vs. targets
+  </Accordion>
+
+  <Accordion title="Multi-task metrics missing">
+    **For POYO+**:
+    - Use `MultiTaskDecodingStitchEvaluator`, not `DecodingStitchEvaluator`
+    - Ensure `multitask_readout` is defined in config
+    - Verify `get_metrics()` returns nested dict structure:
+      ```python
+      metrics[session_id][readout_id][metric_name] = metric
+      ```
+  </Accordion>
+</AccordionGroup>
+
+## Advanced Topics
+
+### Online Evaluation
+
+Evaluate during training without stitching for faster feedback:
+
+```python
+def validation_step(self, batch, batch_idx):
+    output_values = self.model(**batch["model_inputs"])
+    
+    # Quick per-batch metrics (no stitching)
+    mask = batch["eval_mask"]
+    preds_masked = output_values[mask]
+    targets_masked = batch["target_values"][mask]
+    
+    r2 = torchmetrics.functional.r2_score(preds_masked, targets_masked)
+    self.log('val_r2_online', r2)
+    
+    # Still return data for proper stitched evaluation
+    return DataForDecodingStitchEvaluator(...)
+```
+
+### Cross-Session Generalization
+
+Test generalization to new sessions:
+
+```python
+# Train on sessions 1-10, test on session 11
+train_recording_ids = [f"session_{i:03d}" for i in range(1, 11)]
+test_recording_ids = ["session_011"]
+
+train_dataset = MyDataset(
+    root=data_root,
+    recording_ids=train_recording_ids,
+)
+
+test_dataset = MyDataset(
+    root=data_root,
+    recording_ids=test_recording_ids,
+)
+
+# Test on held-out session
+trainer.test(wrapper, test_dataset)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Training Models" icon="rocket" href="/guides/training">
+    Learn about the training pipeline
+  </Card>
+  <Card title="Custom Datasets" icon="database" href="/guides/custom-datasets">
+    Integrate your own neural data
+  </Card>
+  <Card title="Utils API" icon="wrench" href="/api/utils">
+    Explore utility functions and helpers
+  </Card>
+  <Card title="Metrics" icon="chart-bar" href="https://lightning.ai/docs/torchmetrics">
+    Explore torchmetrics documentation
+  </Card>
+</CardGroup>

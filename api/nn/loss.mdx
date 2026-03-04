@@ -1,0 +1,299 @@
+---
+title: Loss Functions
+description: Loss functions and metrics for training neural networks
+---
+
+## Base Loss Class
+
+All loss functions in torch_brain inherit from the `Loss` base class.
+
+### Loss
+
+Abstract base class for all loss functions.
+
+```python
+class Loss(torch.nn.Module, ABC):
+    @abstractmethod
+    def forward(
+        self,
+        input: torch.Tensor,
+        target: torch.Tensor,
+        weights: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor
+```
+
+All losses support an optional `weights` parameter for weighted loss computation.
+
+---
+
+## MSELoss
+
+Mean Squared Error loss with optional sample weighting.
+
+### Class Signature
+
+```python
+class MSELoss(Loss):
+    def forward(
+        self,
+        input: Tensor,
+        target: Tensor,
+        weights: Optional[Tensor] = None,
+    ) -> Tensor
+```
+
+### Parameters
+
+<ParamField path="input" type="Tensor" required>
+  Predicted values of shape `(batch_size, dim)`
+</ParamField>
+
+<ParamField path="target" type="Tensor" required>
+  Target values of shape `(batch_size, dim)`
+</ParamField>
+
+<ParamField path="weights" type="Optional[Tensor]">
+  Sample weights of shape `(batch_size,)`. If provided, the loss is computed as a weighted average.
+</ParamField>
+
+### Mathematical Formulation
+
+Without weights:
+$$
+\mathcal{L} = \frac{1}{N} \sum_{i=1}^{N} \|\mathbf{x}_i - \mathbf{y}_i\|^2
+$$
+
+With weights:
+$$
+\mathcal{L} = \frac{\sum_{i=1}^{N} w_i \|\mathbf{x}_i - \mathbf{y}_i\|^2}{\sum_{i=1}^{N} w_i}
+$$
+
+where $\mathbf{x}_i$ is the input, $\mathbf{y}_i$ is the target, and $w_i$ are the weights.
+
+### Shape Requirements
+
+- Input: `(batch_size, dim)` - Must have exactly 2 dimensions
+- Target: `(batch_size, dim)` - Must have exactly 2 dimensions
+- Weights: `(batch_size,)` - Must have exactly 1 dimension
+- Output: Scalar tensor
+
+### Usage Example
+
+```python
+from torch_brain.nn.loss import MSELoss
+import torch
+
+loss_fn = MSELoss()
+
+# Predictions and targets
+predictions = torch.randn(32, 10)  # batch_size=32, dim=10
+targets = torch.randn(32, 10)
+
+# Compute unweighted loss
+loss = loss_fn(predictions, targets)
+print(loss.item())  # Scalar value
+
+# Compute weighted loss
+weights = torch.rand(32)  # Random weights for each sample
+weighted_loss = loss_fn(predictions, targets, weights)
+print(weighted_loss.item())  # Scalar value
+```
+
+---
+
+## CrossEntropyLoss
+
+Cross-entropy loss for classification tasks with optional sample weighting.
+
+### Class Signature
+
+```python
+class CrossEntropyLoss(Loss):
+    def forward(
+        self,
+        input: Tensor,
+        target: Tensor,
+        weights: Optional[Tensor] = None,
+    ) -> Tensor
+```
+
+### Parameters
+
+<ParamField path="input" type="Tensor" required>
+  Logits (unnormalized scores) of shape `(batch_size, num_classes)`
+</ParamField>
+
+<ParamField path="target" type="Tensor" required>
+  Class indices of shape `(batch_size,)` with values in range `[0, num_classes-1]`
+</ParamField>
+
+<ParamField path="weights" type="Optional[Tensor]">
+  Sample weights of shape `(batch_size,)`. If provided, the loss is computed as a weighted average.
+</ParamField>
+
+### Mathematical Formulation
+
+Without weights:
+$$
+\mathcal{L} = -\frac{1}{N} \sum_{i=1}^{N} \log\left(\frac{e^{x_{i,y_i}}}{\sum_{j=1}^{C} e^{x_{i,j}}}\right)
+$$
+
+With weights:
+$$
+\mathcal{L} = -\frac{\sum_{i=1}^{N} w_i \log\left(\frac{e^{x_{i,y_i}}}{\sum_{j=1}^{C} e^{x_{i,j}}}\right)}{\sum_{i=1}^{N} w_i}
+$$
+
+where $x_{i,j}$ are the logits, $y_i$ is the target class, $C$ is the number of classes, and $w_i$ are the weights.
+
+### Shape Requirements
+
+- Input: `(batch_size, num_classes)` - Must have exactly 2 dimensions
+- Target: `(batch_size,)` - Must have exactly 1 dimension
+- Weights: `(batch_size,)` - Must have exactly 1 dimension
+- Output: Scalar tensor
+
+### Usage Example
+
+```python
+from torch_brain.nn.loss import CrossEntropyLoss
+import torch
+
+loss_fn = CrossEntropyLoss()
+
+# Logits and targets for 10-class classification
+logits = torch.randn(32, 10)  # batch_size=32, num_classes=10
+targets = torch.randint(0, 10, (32,))  # Class indices in [0, 9]
+
+# Compute unweighted loss
+loss = loss_fn(logits, targets)
+print(loss.item())  # Scalar value
+
+# Compute weighted loss (e.g., to handle class imbalance)
+weights = torch.rand(32)
+weighted_loss = loss_fn(logits, targets, weights)
+print(weighted_loss.item())  # Scalar value
+```
+
+---
+
+## MallowDistanceLoss
+
+Mallow distance loss for ordinal classification tasks. This loss is useful when class labels have a natural ordering and you want to penalize predictions based on their distance from the true class.
+
+### Class Signature
+
+```python
+class MallowDistanceLoss(Loss):
+    def forward(
+        self,
+        input: Tensor,
+        target: Tensor,
+        weights: Tensor,
+    ) -> Tensor
+```
+
+### Parameters
+
+<ParamField path="input" type="Tensor" required>
+  Logits (unnormalized scores) of shape `(batch_size, num_classes)`
+</ParamField>
+
+<ParamField path="target" type="Tensor" required>
+  Class indices of shape `(batch_size,)` with values in range `[0, num_classes-1]`
+</ParamField>
+
+<ParamField path="weights" type="Tensor" required>
+  Sample weights of shape `(batch_size,)`. Note: weights are required (not optional) for this loss.
+</ParamField>
+
+### Mathematical Formulation
+
+The Mallow distance loss is computed as:
+
+$$
+\mathcal{L} = \frac{\sum_{i=1}^{N} w_i \cdot d_M(\mathbf{p}_i, \mathbf{t}_i)}{\sum_{i=1}^{N} w_i}
+$$
+
+where the Mallow distance is:
+
+$$
+d_M(\mathbf{p}, \mathbf{t}) = \frac{1}{C} \sum_{j=1}^{C} \left(\text{cumsum}(\mathbf{t})_j - \text{cumsum}(\mathbf{p})_j\right)^2
+$$
+
+Here:
+- $\mathbf{p}_i = \text{softmax}(\mathbf{x}_i)$ is the predicted probability distribution
+- $\mathbf{t}_i$ is the one-hot encoded target
+- $C$ is the number of classes
+- $w_i$ are the sample weights
+
+The Mallow distance measures the squared difference between cumulative distributions, which naturally accounts for the ordinal nature of the classes.
+
+### Shape Requirements
+
+- Input: `(batch_size, num_classes)` - Logits
+- Target: `(batch_size,)` - Class indices
+- Weights: `(batch_size,)` - Sample weights (required)
+- Output: Scalar tensor
+
+### When to Use
+
+Use MallowDistanceLoss when:
+- Your classes have a natural ordering (e.g., ratings from 1-5, severity levels)
+- You want to penalize predictions that are far from the true class more heavily
+- Standard cross-entropy treats all misclassifications equally, but you need to account for distance
+
+### Usage Example
+
+```python
+from torch_brain.nn.loss import MallowDistanceLoss
+import torch
+
+loss_fn = MallowDistanceLoss()
+
+# Example: Ordinal classification with 5 severity levels (0=none, 1=mild, ..., 4=severe)
+batch_size = 32
+num_classes = 5
+
+logits = torch.randn(batch_size, num_classes)
+targets = torch.randint(0, num_classes, (batch_size,))
+weights = torch.ones(batch_size)  # Equal weights
+
+# Compute loss
+loss = loss_fn(logits, targets, weights)
+print(loss.item())
+
+# With non-uniform weights (e.g., to handle class imbalance)
+weights = torch.rand(batch_size)
+weighted_loss = loss_fn(logits, targets, weights)
+print(weighted_loss.item())
+```
+
+### Comparison with CrossEntropyLoss
+
+```python
+import torch
+from torch_brain.nn.loss import MallowDistanceLoss, CrossEntropyLoss
+
+mallow_loss = MallowDistanceLoss()
+ce_loss = CrossEntropyLoss()
+
+# Consider a 5-class ordinal problem
+logits = torch.tensor([[1.0, 2.0, 0.5, 0.1, 0.1]])  # Predicts class 1
+true_class_0 = torch.tensor([0])  # True class is 0 (adjacent)
+true_class_4 = torch.tensor([4])  # True class is 4 (far away)
+weights = torch.ones(1)
+
+# Mallow loss penalizes distant errors more
+mallow_adjacent = mallow_loss(logits, true_class_0, weights)
+mallow_distant = mallow_loss(logits, true_class_4, weights)
+print(f"Mallow - adjacent error: {mallow_adjacent.item():.4f}")
+print(f"Mallow - distant error: {mallow_distant.item():.4f}")
+# distant error >> adjacent error
+
+# Cross-entropy treats all errors similarly
+ce_adjacent = ce_loss(logits, true_class_0, weights)
+ce_distant = ce_loss(logits, true_class_4, weights)
+print(f"CE - adjacent error: {ce_adjacent.item():.4f}")
+print(f"CE - distant error: {ce_distant.item():.4f}")
+# Similar magnitude
+```
